@@ -1,0 +1,34 @@
+services:
+  # 1. Backend API & WebSockets Service
+  - type: web
+    name: laspa-anpr-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npx prisma db push && node prisma/seed.js
+    startCommand: node src/index.js
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: DATABASE_URL
+        value: file:./dev.db
+      - key: NODE_ENV
+        value: production
+
+  # 2. Frontend React/Vite Static Site
+  - type: web
+    name: laspa-anpr-frontend
+    env: static
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      # These must be configured in Render to point to the backend's URL.
+      # Render will prompt you for these values when creating the Blueprint.
+      - key: VITE_API_BASE_URL
+        sync: false
+        placeholder: "e.g., https://laspa-anpr-backend.onrender.com"
+      - key: VITE_WS_BASE_URL
+        sync: false
+        placeholder: "e.g., wss://laspa-anpr-backend.onrender.com"
