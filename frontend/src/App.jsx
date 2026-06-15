@@ -86,13 +86,13 @@ export default function App() {
     }
 
     setWsStatus('connecting');
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
     
-    // Fallback URL for local development (if proxy is not active)
-    const socketUrl = process.env.NODE_ENV === 'production' 
-      ? wsUrl 
-      : `${wsProtocol}//localhost:5000`;
+    const defaultWsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const fallbackUrl = import.meta.env.DEV 
+      ? `${defaultWsProtocol}//localhost:5000` 
+      : `${defaultWsProtocol}//${window.location.host}/ws`;
+      
+    const socketUrl = import.meta.env.VITE_WS_BASE_URL || fallbackUrl;
 
     const socket = new WebSocket(socketUrl);
     wsRef.current = socket;
