@@ -1,0 +1,70 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Event {
+  id           String   @id @default(uuid())
+  timestamp    DateTime @default(now())
+  cameraId     String
+  plateNumber  String
+  confidence   Float
+  imageUrl     String
+  isFlagged    Boolean  @default(false)
+  flagReason   String?
+  createdAt    DateTime @default(now())
+
+  // ── ANPR enrichment fields ──────────────────────────────────────────────────
+  anprType         String?   // $(ANPR_TYPE)  e.g. "normal", "plate_only"
+  anprCountry      String?   // $(COUNTRY_SHORT)
+  anprState        String?   // $(STATE_SHORT)
+  anprBgColor      String?   // $(ANPR_BGCOLOR)
+  anprColor        String?   // $(ANPR_COLOR)
+  anprResultCnt    Int?      // $(ANPR_RESULTCNT)
+
+  // ── MMR (Make/Model/Recognition) ────────────────────────────────────────────
+  mmrMake          String?
+  mmrModel         String?
+  mmrSubmodel      String?
+  mmrCategory      String?
+  mmrColor         String?
+  mmrModelConf     Float?
+  mmrCategoryConf  Float?
+  mmrColorConf     Float?
+
+  // ── Trigger / speed info ────────────────────────────────────────────────────
+  triggerSpeed      Float?    // $(TRIGGER_SPEED) * 0.01
+  triggerSpeedLimit Float?    // $(TRIGGER_SPEEDLIMIT) * 0.01
+  triggerDirection  String?   // $(TRIGGER_DIRECTION)
+  triggerCategory   String?   // $(TRIGGER_CATEGORY)
+  triggerVclass     String?   // $(TRIGGER_VCLASS)
+
+  // ── GPS ─────────────────────────────────────────────────────────────────────
+  gpsLat           String?
+  gpsLon           String?
+
+  // ── Country / location ───────────────────────────────────────────────────────
+  countryLong      String?
+  countryShort     String?
+  stateLong        String?
+  stateShort       String?
+  location         String?
+
+  // ── Raw payload (full JSON stored for inspection) ────────────────────────────
+  rawPayload       String?   // stored as JSON string
+
+  @@index([plateNumber])
+  @@index([timestamp])
+  @@index([cameraId])
+}
+
+model FlagList {
+  id           String   @id @default(uuid())
+  platePattern String   @unique
+  label        String
+  createdAt    DateTime @default(now())
+}
