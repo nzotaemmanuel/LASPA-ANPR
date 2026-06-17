@@ -5,6 +5,18 @@ const path = require('path');
 const multer = require('multer');
 const prisma = require('../db');
 
+// In-memory registries to match split camera JSON and JPEG requests
+const recentJSONs = new Map();
+const pendingJPEGs = new Map();
+
+function getCleanIp(req) {
+  let ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.substring(7);
+  }
+  return ip;
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // In-memory raw payload log (circular buffer, max 50)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -264,6 +276,16 @@ function normalizePayload(body, files = []) {
       imageUrl = `/uploads/${uploadedImageFile.filename}`;
     }
 
+    // 4. Fallback to any uploaded image file in files array (regardless of field name)
+    if (imageUrl === '/uploads/default_vehicle.jpg' && Array.isArray(files)) {
+      const imgFile = files.find(f => 
+        f.mimetype && f.mimetype.startsWith('image/')
+      );
+      if (imgFile) {
+        imageUrl = `/uploads/${imgFile.filename}`;
+      }
+    }
+
     // Speed values (after $DMULT)
     const triggerSpeedStr = sanitizeCameraValue(trigger.speed);
     const triggerSpeedLimitStr = sanitizeCameraValue(trigger.speed_limit);
@@ -337,6 +359,16 @@ function normalizePayload(body, files = []) {
     } else {
       const savedPath = saveBase64Image(image, 'flat_img');
       if (savedPath) imageUrl = savedPath;
+    }
+  }
+
+  // Fallback to any uploaded image file in files array (regardless of field name)
+  if (imageUrl === '/uploads/default_vehicle.jpg' && Array.isArray(files)) {
+    const imgFile = files.find(f => 
+      f.mimetype && f.mimetype.startsWith('image/')
+    );
+    if (imgFile) {
+      imageUrl = `/uploads/${imgFile.filename}`;
     }
   }
 
@@ -440,6 +472,129 @@ async function handleIngestion(req, res) {
       } catch (e) { /* ignore */ }
     }
 
+    // Extract JSON payload from uploaded files if req.body is empty (for cameras uploading JSON as a file attachment)
+    if ((!body || Object.keys(body).length === 0) && req.files && req.files.length > 0) {
+      const jsonFile = req.files.find(f => 
+        (f.originalname && f.originalname.toLowerCase().endsWith('.json')) || 
+        f.mimetype === 'application/json' ||
+        f.fieldname === 'json' ||
+        f.fieldname === 'UploadInfo'
+      );
+      if (jsonFile) {
+        try {
+          const fileContent = fs.readFileSync(jsonFile.path, 'utf8');
+          body = JSON.parse(fileContent);
+          console.log(`[INGEST] Successfully extracted JSON payload from uploaded file: ${jsonFile.originalname}`);
+        } catch (e) {
+          console.error('[INGEST] Failed to parse uploaded JSON file:', e.message);
+        }
+      }
+    }
+    const sourceIp = getCleanIp(req);
+    const isCameraJson = !!(body && body.result);
+    const isSplitJpeg = !isCameraJson && (!body || !body.camera_id) && req.files && req.files.length > 0;
+
+    let pendingResolver = null;
+
+    if (isSplitJpeg) {
+      const firstFile = req.files[0];
+      console.log(`[INGEST] Received potential split JPEG request from IP: ${sourceIp}, file: ${firstFile.filename}`);
+      
+      // Check if we recently processed a JSON request from this IP
+      const recentJson = recentJSONs.get(sourceIp);
+      if (recentJson && (Date.now() - recentJson.timestamp < 5000)) {
+        // Found a recent JSON request from this IP
+        console.log(`[INGEST] Found matching recent JSON event ${recentJson.eventId} for IP ${sourceIp}`);
+        
+        if (recentJson.imageUrl && recentJson.imageUrl !== '/uploads/default_vehicle.jpg') {
+          // The JSON request already had the image (base64) and saved it
+          console.log(`[INGEST] JSON event already has image: ${recentJson.imageUrl}. Deleting duplicate upload.`);
+          try {
+            if (fs.existsSync(firstFile.path)) {
+              fs.unlinkSync(firstFile.path);
+            }
+          } catch (err) {
+            console.error('[INGEST] Error deleting duplicate file:', err.message);
+          }
+          return res.status(200).json({ message: 'Image upload processed (deduplicated)' });
+        } else {
+          // The JSON request did NOT have the image. We must associate this uploaded file with the event!
+          const updatedImageUrl = `/uploads/${firstFile.filename}`;
+          const updatedEvent = await prisma.event.update({
+            where: { id: recentJson.eventId },
+            data: { imageUrl: updatedImageUrl }
+          });
+          console.log(`[INGEST] Updated Event ${recentJson.eventId} with uploaded JPEG image: ${updatedImageUrl}`);
+          
+          const broadcast = req.app.get('broadcast');
+          if (broadcast) {
+            broadcast(updatedEvent);
+          }
+          return res.status(200).json({ message: 'Image associated with event successfully', event: updatedEvent });
+        }
+      } else {
+        // No recent JSON metadata found yet. The JPEG might have arrived first.
+        // We will wait for the JSON metadata up to 1500ms using a Promise delay.
+        console.log(`[INGEST] No recent JSON found for IP ${sourceIp}. Waiting up to 1500ms for metadata...`);
+        let resolvedEvent = null;
+        
+        await new Promise((resolve) => {
+          let resolved = false;
+          pendingJPEGs.set(sourceIp, {
+            filename: firstFile.filename,
+            timestamp: Date.now(),
+            resolve: (evt) => {
+              resolved = true;
+              resolve(evt);
+            }
+          });
+          
+          setTimeout(() => {
+            if (!resolved) {
+              pendingJPEGs.delete(sourceIp);
+              resolve(null);
+            }
+          }, 1500);
+        }).then((evt) => {
+          resolvedEvent = evt;
+        });
+        
+        if (resolvedEvent) {
+          console.log(`[INGEST] Split JPEG successfully merged with JSON metadata from IP ${sourceIp}`);
+          return res.status(200).json({ message: 'Image merged with metadata', event: resolvedEvent });
+        } else {
+          console.log(`[INGEST] Timeout waiting for JSON from IP ${sourceIp}. Discarding orphaned image and preventing fallback DB record creation.`);
+          try {
+            if (fs.existsSync(firstFile.path)) {
+              fs.unlinkSync(firstFile.path);
+            }
+          } catch (err) {
+            console.error('[INGEST] Error deleting orphaned JPEG file:', err.message);
+          }
+          return res.status(200).json({ message: 'Orphaned image processed (discarded - no metadata)' });
+        }
+      }
+    } else if (isCameraJson) {
+      // It's a JSON metadata request from the camera.
+      // Check if there is a pending JPEG request waiting for it.
+      const pendingJpeg = pendingJPEGs.get(sourceIp);
+      if (pendingJpeg && (Date.now() - pendingJpeg.timestamp < 3000)) {
+        console.log(`[INGEST] Found waiting pending JPEG from IP ${sourceIp}: ${pendingJpeg.filename}`);
+        // Inject the JPEG file into req.files so normalizePayload will find it and use it!
+        const matchedFile = {
+          fieldname: 'normal_img',
+          filename: pendingJpeg.filename,
+          path: path.join(uploadsDir, pendingJpeg.filename),
+          mimetype: 'image/jpeg'
+        };
+        if (!req.files) req.files = [];
+        req.files.push(matchedFile);
+        
+        pendingResolver = pendingJpeg.resolve;
+        pendingJPEGs.delete(sourceIp);
+      }
+    }
+
     // 0. Log the raw payload
     const logEntry = logRawPayload(req, body);
     if (req.files && req.files.length > 0) logEntry.hasImageFile = true;
@@ -512,6 +667,26 @@ async function handleIngestion(req, res) {
         rawPayload:       normalized.rawPayload,
       },
     });
+
+    if (isCameraJson) {
+      recentJSONs.set(sourceIp, {
+        eventId: event.id,
+        imageUrl: event.imageUrl,
+        timestamp: Date.now()
+      });
+      // Automatically clean up after 5 seconds
+      setTimeout(() => {
+        const item = recentJSONs.get(sourceIp);
+        if (item && item.eventId === event.id) {
+          recentJSONs.delete(sourceIp);
+        }
+      }, 5000);
+    }
+
+    if (pendingResolver) {
+      console.log(`[INGEST] Resolving pending JPEG request for IP ${sourceIp}`);
+      pendingResolver(event);
+    }
 
     const format = (body && body.result) ? 'camera-native' : 'simulator-flat';
     console.log(`[INGEST] [${format}] Plate: ${normalized.plateNumber} | Cam: ${normalized.cameraId} | Confidence: ${normalized.confidence}% | Flagged: ${isFlagged}`);
