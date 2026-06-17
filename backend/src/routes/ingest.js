@@ -86,7 +86,99 @@ function logRawPayload(req, body) {
 // Accepts EITHER the real camera native format OR the flat simulator format
 // Returns a unified object consumed by the ingestion handler.
 // ──────────────────────────────────────────────────────────────────────────────
-function normalizePayload(body, uploadedFile) {
+/**
+ * Sanitizes template strings uploaded by the camera.
+ * 1. Returns null if the template variable was NOT replaced (e.g. contains "$(" syntax).
+ * 2. Strips any trailing semicolon if it is present.
+ * 3. Returns null for empty strings.
+ */
+function sanitizeCameraValue(val) {
+  if (val === undefined || val === null) return null;
+  
+  // If it's a number, convert to string for uniform processing
+  let strVal = String(val).trim();
+
+  // If the placeholder is unreplaced, return null
+  if (strVal.includes('$(') || strVal.includes('$FormatTime') || strVal.includes('$DB2JSON') || strVal.includes('$DMULT')) {
+    return null;
+  }
+
+  // Strip trailing semicolon
+  if (strVal.endsWith(';')) {
+    strVal = strVal.slice(0, -1).trim();
+  }
+
+  return strVal === '' ? null : strVal;
+}
+
+/**
+ * Decodes a base64 encoded image string and saves it to the uploads directory.
+ * Returns the relative static asset path or null if saving fails.
+ */
+function saveBase64Image(base64Str, prefix = 'image') {
+  if (!base64Str || typeof base64Str !== 'string') return null;
+
+  try {
+    // Strip trailing semicolon if present (due to template format)
+    let cleanBase64 = base64Str.trim();
+    if (cleanBase64.endsWith(';')) {
+      cleanBase64 = cleanBase64.slice(0, -1).trim();
+    }
+
+    // Check if it starts with standard data URI scheme
+    const dataUriMatch = cleanBase64.match(/^data:image\/([a-zA-Z+]+);base64,(.+)$/);
+    let ext = 'jpg';
+    let rawData = cleanBase64;
+
+    if (dataUriMatch && dataUriMatch.length === 3) {
+      ext = dataUriMatch[1];
+      rawData = dataUriMatch[2];
+    } else {
+      // Determine file extension from base64 signature
+      if (cleanBase64.startsWith('/9j/')) ext = 'jpg';
+      else if (cleanBase64.startsWith('iVBORw0KG')) ext = 'png';
+      else if (cleanBase64.startsWith('PHN2Zy')) ext = 'svg+xml';
+    }
+
+    // Convert raw base64 data to binary buffer
+    const buffer = Buffer.from(rawData, 'base64');
+    if (buffer.length < 10) {
+      // Not a valid image file, too small
+      return null;
+    }
+
+    const filename = `${Date.now()}_${prefix}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const filePath = path.join(uploadsDir, filename);
+
+    // Ensure uploads directory exists (just in case)
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    fs.writeFileSync(filePath, buffer);
+    return `/uploads/${filename}`;
+  } catch (error) {
+    console.error('[IMAGE-DECODE] Failed to decode/save base64 image:', error);
+    return null;
+  }
+}
+
+function normalizePayload(body, files = []) {
+  // Find uploaded files by name if multipart form was sent
+  let uploadedNormalImg = null;
+  let uploadedLpImg = null;
+  let uploadedAuxImg = null;
+  let uploadedImageFile = null;
+
+  if (Array.isArray(files)) {
+    for (const file of files) {
+      if (file.fieldname === 'normal_img') uploadedNormalImg = file;
+      else if (file.fieldname === 'lp_img') uploadedLpImg = file;
+      else if (file.fieldname === 'aux_img') uploadedAuxImg = file;
+      else if (file.fieldname === 'imageFile') uploadedImageFile = file;
+    }
+  }
+
   // ── Real Camera Format ────────────────────────────────────────────────────
   // Detected by the presence of a top-level "result" key
   if (body && body.result) {
@@ -99,45 +191,84 @@ function normalizePayload(body, uploadedFile) {
     const images = r.images || {};
     const capture = r.capture || {};
 
-    // Parse confidence (may come as string "95.4" or number)
-    const rawConf = parseFloat(anpr.confidence);
-    const confidence = isNaN(rawConf) ? 100.0 : rawConf;
+    // Parse confidence
+    const sanitizedConf = sanitizeCameraValue(anpr.confidence);
+    const confidence = sanitizedConf ? (parseFloat(sanitizedConf) || 100.0) : 100.0;
 
     // Parse timestamp from frametime or frametimems
     let timestamp = new Date();
-    if (capture.frametime) {
-      // Format: "20250615T143022+0100"  → ISO-ish
+    const frametime = sanitizeCameraValue(capture.frametime);
+    const frametimems = sanitizeCameraValue(capture.frametimems);
+
+    if (frametime) {
       try {
+        // Format: "20250615T143022+0100"  → ISO-ish
         // Insert colons to make it parseable: YYYYMMDDTHHMMSS+HH00
-        const ft = capture.frametime
+        const ft = frametime
           .replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(.*)$/, '$1-$2-$3T$4:$5:$6$7');
         const d = new Date(ft);
         if (!isNaN(d)) timestamp = d;
       } catch (_) { /* keep server time */ }
+    } else if (frametimems) {
+      const ms = parseInt(frametimems);
+      if (!isNaN(ms)) timestamp = new Date(ms);
     }
 
     // Plate text (may be empty string if no ANPR result)
-    const plateNumber = (anpr.text || '').trim().toUpperCase() || 'UNKNOWN';
+    const plateText = sanitizeCameraValue(anpr.text);
+    const plateNumber = plateText ? plateText.toUpperCase() : 'UNKNOWN';
 
     // Camera ID — prefer cameraid, fall back to location
-    const cameraId = (r.cameraid || r.location || 'CAM-UNKNOWN').trim();
+    const cameraVal = sanitizeCameraValue(r.cameraid) || sanitizeCameraValue(r.location);
+    const cameraId = cameraVal ? cameraVal.trim() : 'CAM-UNKNOWN';
 
-    // Image URL – images are embedded base64 or URLs from camera;
-    // we store them as-is (too large to always re-save to disk)
+    // Resolve images
     let imageUrl = '/uploads/default_vehicle.jpg';
-    const normalImg = images.normal_img || '';
-    if (normalImg && normalImg.length > 10 && !normalImg.includes('$(')) {
-      // It's real image data (base64 or URL)
-      if (normalImg.startsWith('http://') || normalImg.startsWith('https://')) {
-        imageUrl = normalImg;
-      } else if (normalImg.startsWith('data:image')) {
-        imageUrl = normalImg; // store data URI
+
+    // 1. Resolve normal_img
+    if (uploadedNormalImg) {
+      imageUrl = `/uploads/${uploadedNormalImg.filename}`;
+    } else {
+      const normalImgStr = images.normal_img;
+      if (normalImgStr && normalImgStr.length > 10) {
+        const cleanNormalImg = sanitizeCameraValue(normalImgStr);
+        if (cleanNormalImg) {
+          if (cleanNormalImg.startsWith('http://') || cleanNormalImg.startsWith('https://')) {
+            imageUrl = cleanNormalImg;
+          } else {
+            const savedPath = saveBase64Image(cleanNormalImg, 'normal_img');
+            if (savedPath) imageUrl = savedPath;
+          }
+        }
       }
     }
 
-    // Parse speed values (camera sends them as floats already after $DMULT)
-    const triggerSpeed = parseFloat(trigger.speed) || null;
-    const triggerSpeedLimit = parseFloat(trigger.speed_limit) || null;
+    // 2. Resolve lp_img
+    if (imageUrl === '/uploads/default_vehicle.jpg') {
+      if (uploadedLpImg) {
+        imageUrl = `/uploads/${uploadedLpImg.filename}`;
+      } else {
+        const lpImgStr = images.lp_img;
+        if (lpImgStr && lpImgStr.length > 10) {
+          const cleanLpImg = sanitizeCameraValue(lpImgStr);
+          if (cleanLpImg) {
+            const savedPath = saveBase64Image(cleanLpImg, 'lp_img');
+            if (savedPath) imageUrl = savedPath;
+          }
+        }
+      }
+    }
+
+    // 3. Fallback to imageFile (from simulator multipart form)
+    if (imageUrl === '/uploads/default_vehicle.jpg' && uploadedImageFile) {
+      imageUrl = `/uploads/${uploadedImageFile.filename}`;
+    }
+
+    // Speed values (after $DMULT)
+    const triggerSpeedStr = sanitizeCameraValue(trigger.speed);
+    const triggerSpeedLimitStr = sanitizeCameraValue(trigger.speed_limit);
+    const triggerSpeed = triggerSpeedStr ? parseFloat(triggerSpeedStr) : null;
+    const triggerSpeedLimit = triggerSpeedLimitStr ? parseFloat(triggerSpeedLimitStr) : null;
 
     return {
       timestamp,
@@ -146,36 +277,36 @@ function normalizePayload(body, uploadedFile) {
       confidence,
       imageUrl,
       // Enrichment
-      anprType: anpr.type || null,
-      anprCountry: anpr.country || null,
-      anprState: anpr.state || null,
-      anprBgColor: anpr.bgcolor || null,
-      anprColor: anpr.color || null,
-      anprResultCnt: parseInt(anpr.resultcnt) || null,
+      anprType: sanitizeCameraValue(anpr.type),
+      anprCountry: sanitizeCameraValue(anpr.country),
+      anprState: sanitizeCameraValue(anpr.state),
+      anprBgColor: sanitizeCameraValue(anpr.bgcolor),
+      anprColor: sanitizeCameraValue(anpr.color),
+      anprResultCnt: anpr.resultcnt ? (parseInt(sanitizeCameraValue(anpr.resultcnt)) || null) : null,
       // MMR
-      mmrMake: mmr.make || null,
-      mmrModel: mmr.model || null,
-      mmrSubmodel: mmr.submodel || null,
-      mmrCategory: mmr.category || null,
-      mmrColor: mmr.color || null,
-      mmrModelConf: parseFloat(mmr.model_conf) || null,
-      mmrCategoryConf: parseFloat(mmr.category_conf) || null,
-      mmrColorConf: parseFloat(mmr.color_conf) || null,
+      mmrMake: sanitizeCameraValue(mmr.make),
+      mmrModel: sanitizeCameraValue(mmr.model),
+      mmrSubmodel: sanitizeCameraValue(mmr.submodel),
+      mmrCategory: sanitizeCameraValue(mmr.category),
+      mmrColor: sanitizeCameraValue(mmr.color),
+      mmrModelConf: mmr.model_conf ? (parseFloat(sanitizeCameraValue(mmr.model_conf)) || null) : null,
+      mmrCategoryConf: mmr.category_conf ? (parseFloat(sanitizeCameraValue(mmr.category_conf)) || null) : null,
+      mmrColorConf: mmr.color_conf ? (parseFloat(sanitizeCameraValue(mmr.color_conf)) || null) : null,
       // Trigger
       triggerSpeed,
       triggerSpeedLimit,
-      triggerDirection: trigger.direction || null,
-      triggerCategory: trigger.category || null,
-      triggerVclass: trigger.vclass || null,
+      triggerDirection: sanitizeCameraValue(trigger.direction),
+      triggerCategory: sanitizeCameraValue(trigger.category),
+      triggerVclass: sanitizeCameraValue(trigger.vclass),
       // Country / location
-      countryLong: country.country_long || null,
-      countryShort: country.country_short || null,
-      stateLong: country.state_long || null,
-      stateShort: country.state_short || null,
-      location: r.location || null,
+      countryLong: sanitizeCameraValue(country.country_long),
+      countryShort: sanitizeCameraValue(country.country_short),
+      stateLong: sanitizeCameraValue(country.state_long),
+      stateShort: sanitizeCameraValue(country.state_short),
+      location: sanitizeCameraValue(r.location),
       // GPS
-      gpsLat: misc.gps_lat || null,
-      gpsLon: misc.gps_lon || null,
+      gpsLat: sanitizeCameraValue(misc.gps_lat),
+      gpsLon: sanitizeCameraValue(misc.gps_lon),
       // Raw payload stored as JSON string for auditing
       rawPayload: JSON.stringify(body),
     };
@@ -196,13 +327,16 @@ function normalizePayload(body, uploadedFile) {
 
   let imageUrl = '/uploads/default_vehicle.jpg';
 
-  if (uploadedFile) {
-    imageUrl = `/uploads/${uploadedFile.filename}`;
+  if (uploadedImageFile) {
+    imageUrl = `/uploads/${uploadedImageFile.filename}`;
   } else if (image && typeof image === 'string') {
     if (image.startsWith('http://') || image.startsWith('https://')) {
       imageUrl = image;
     } else if (image.startsWith('data:image') || image.startsWith('data:image/svg')) {
       imageUrl = image;
+    } else {
+      const savedPath = saveBase64Image(image, 'flat_img');
+      if (savedPath) imageUrl = savedPath;
     }
   }
 
@@ -252,10 +386,34 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => {
     const timestamp = Date.now();
-    const cameraId = req.body.camera_id || 'unknown-cam';
-    const plate = req.body.plate_number || 'unknown-plate';
+    let cameraId = 'unknown-cam';
+    let plate = 'unknown-plate';
+
+    // Parse body if it has been parsed or check fields
+    if (req.body) {
+      if (req.body.camera_id) {
+        cameraId = req.body.camera_id;
+      } else if (req.body.result && req.body.result.cameraid) {
+        cameraId = req.body.result.cameraid;
+      } else if (req.body.cameraid) {
+        cameraId = req.body.cameraid;
+      }
+
+      if (req.body.plate_number) {
+        plate = req.body.plate_number;
+      } else if (req.body.result && req.body.result.anpr && req.body.result.anpr.text) {
+        plate = req.body.result.anpr.text;
+      }
+    }
+
+    // Clean values
+    cameraId = cameraId.replace(/[^a-zA-Z0-9]/g, '_');
+    plate = plate.replace(/[^a-zA-Z0-9]/g, '_');
+    if (cameraId.endsWith('_')) cameraId = cameraId.slice(0, -1);
+    if (plate.endsWith('_')) plate = plate.slice(0, -1);
+
     const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `${timestamp}_${cameraId.replace(/[^a-zA-Z0-9]/g, '_')}_${plate.replace(/[^a-zA-Z0-9]/g, '_')}${ext}`);
+    cb(null, `${timestamp}_${cameraId}_${plate}${ext}`);
   },
 });
 const upload = multer({ storage });
@@ -265,14 +423,29 @@ const upload = multer({ storage });
 // ──────────────────────────────────────────────────────────────────────────────
 async function handleIngestion(req, res) {
   try {
-    const body = req.body;
+    let body = req.body;
+
+    // Handle multipart uploads where JSON template might be sent in a string field named "json" or "UploadInfo"
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch (e) { /* ignore */ }
+    } else if (body && typeof body.json === 'string') {
+      try {
+        body = JSON.parse(body.json);
+      } catch (e) { /* ignore */ }
+    } else if (body && typeof body.UploadInfo === 'string') {
+      try {
+        body = JSON.parse(body.UploadInfo);
+      } catch (e) { /* ignore */ }
+    }
 
     // 0. Log the raw payload
     const logEntry = logRawPayload(req, body);
-    if (req.file) logEntry.hasImageFile = true;
+    if (req.files && req.files.length > 0) logEntry.hasImageFile = true;
 
     // 1. Normalize payload (handles both camera-native and flat simulator formats)
-    const normalized = normalizePayload(body, req.file);
+    const normalized = normalizePayload(body, req.files);
 
     // 2. Basic validation — we must have a camera and plate
     if (!normalized.cameraId || !normalized.plateNumber) {
@@ -463,6 +636,6 @@ router.get('/recent-payloads', (req, res) => {
 });
 
 // ── POST /api/ingest ──────────────────────────────────────────────────────────
-router.post('/', upload.single('imageFile'), handleIngestion);
+router.post('/', upload.any(), handleIngestion);
 
 module.exports = router;
