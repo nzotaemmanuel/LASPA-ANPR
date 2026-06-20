@@ -30,6 +30,15 @@ export default function SimulatorPanel({ role }) {
   const [imageIndex, setImageIndex] = useState(0);
   const [payloadFormat, setPayloadFormat] = useState('camera-native'); // 'camera-native' | 'simulator-flat'
 
+  const [isFined, setIsFined] = useState(false);
+  const [fineAmount, setFineAmount] = useState(25000);
+  const [isDisputed, setIsDisputed] = useState(false);
+  const [isClamped, setIsClamped] = useState(false);
+  const [isTowed, setIsTowed] = useState(false);
+  const [isImpounded, setIsImpounded] = useState(false);
+  const [isBooked, setIsBooked] = useState(false);
+  const [bookingHours, setBookingHours] = useState(2);
+
   const [loading, setLoading] = useState(false);
   const [responseLog, setResponseLog] = useState(null);
   const [errorLog, setErrorLog] = useState('');
@@ -156,7 +165,16 @@ export default function SimulatorPanel({ role }) {
               normal_img: encodedSvg,
               lp_img: '',
               aux_img: ''
-            }
+            },
+            isFined,
+            fineAmount: parseFloat(fineAmount),
+            isDisputed,
+            isClamped,
+            isTowed,
+            isImpounded,
+            isBooked,
+            bookingHours: parseFloat(bookingHours),
+            revenue: (isBooked ? parseFloat(bookingHours) * 500 : 0) + (isFined && !isDisputed ? parseFloat(fineAmount) : 0) + (isClamped ? 10000 : 0) + (isTowed ? 20000 : 0) + (isImpounded ? 35000 : 0)
           }
         };
       } else {
@@ -165,7 +183,16 @@ export default function SimulatorPanel({ role }) {
           plate_number: plateNumber.toUpperCase(),
           confidence: parseFloat(confidence),
           timestamp: now.toISOString(),
-          image: encodedSvg
+          image: encodedSvg,
+          isFined,
+          fineAmount: parseFloat(fineAmount),
+          isDisputed,
+          isClamped,
+          isTowed,
+          isImpounded,
+          isBooked,
+          bookingHours: parseFloat(bookingHours),
+          revenue: (isBooked ? parseFloat(bookingHours) * 500 : 0) + (isFined && !isDisputed ? parseFloat(fineAmount) : 0) + (isClamped ? 10000 : 0) + (isTowed ? 20000 : 0) + (isImpounded ? 35000 : 0)
         };
       }
 
@@ -302,6 +329,114 @@ export default function SimulatorPanel({ role }) {
                   onChange={e => setConfidence(parseFloat(e.target.value))}
                   className="w-full accent-cyan-500 bg-gray-850 h-1.5 rounded-lg cursor-pointer"
                 />
+              </div>
+
+              {/* LASPA Enforcement Metrics (Grid of Checkboxes & Inputs) */}
+              <div className="bg-[#0f172a]/60 p-4 rounded-xl border border-gray-800/80 space-y-4">
+                <span className="block text-gray-400 text-xs font-semibold uppercase border-b border-gray-800 pb-2">
+                  LASPA Enforcement Simulation Parameters
+                </span>
+                
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  {/* Booked Checkbox */}
+                  <label className="flex items-center space-x-2 text-gray-300 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isBooked} 
+                      onChange={e => setIsBooked(e.target.checked)}
+                      className="rounded accent-cyan-500 bg-gray-950 border-gray-800"
+                    />
+                    <span>Booked Parking</span>
+                  </label>
+
+                  {/* Fined Checkbox */}
+                  <label className="flex items-center space-x-2 text-gray-300 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isFined} 
+                      onChange={e => setIsFined(e.target.checked)}
+                      className="rounded accent-cyan-500 bg-gray-950 border-gray-800"
+                    />
+                    <span>Fined (Violation)</span>
+                  </label>
+
+                  {/* Disputed Checkbox (enabled only if fined) */}
+                  <label className={`flex items-center space-x-2 text-gray-300 cursor-pointer ${!isFined ? 'opacity-40 pointer-events-none' : ''}`}>
+                    <input 
+                      type="checkbox" 
+                      checked={isDisputed} 
+                      onChange={e => setIsDisputed(e.target.checked)}
+                      disabled={!isFined}
+                      className="rounded accent-cyan-500 bg-gray-950 border-gray-800"
+                    />
+                    <span>Disputed Fine</span>
+                  </label>
+
+                  {/* Clamped Checkbox */}
+                  <label className="flex items-center space-x-2 text-gray-300 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isClamped} 
+                      onChange={e => setIsClamped(e.target.checked)}
+                      className="rounded accent-cyan-500 bg-gray-950 border-gray-800"
+                    />
+                    <span>Clamped Vehicle</span>
+                  </label>
+
+                  {/* Towed Checkbox */}
+                  <label className="flex items-center space-x-2 text-gray-300 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isTowed} 
+                      onChange={e => setIsTowed(e.target.checked)}
+                      className="rounded accent-cyan-500 bg-gray-950 border-gray-800"
+                    />
+                    <span>Towed Vehicle</span>
+                  </label>
+
+                  {/* Impounded Checkbox */}
+                  <label className="flex items-center space-x-2 text-gray-300 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isImpounded} 
+                      onChange={e => setIsImpounded(e.target.checked)}
+                      className="rounded accent-cyan-500 bg-gray-950 border-gray-800"
+                    />
+                    <span>Impounded Vehicle</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-gray-800/50">
+                  {/* Booking Hours Input */}
+                  <div className={!isBooked ? 'opacity-40 pointer-events-none' : ''}>
+                    <label className="block text-gray-500 text-[10px] uppercase font-semibold mb-1">Booking Hours</label>
+                    <input 
+                      type="number" 
+                      min="0.5" 
+                      max="24" 
+                      step="0.5"
+                      value={bookingHours}
+                      onChange={e => setBookingHours(parseFloat(e.target.value) || 0)}
+                      disabled={!isBooked}
+                      className="w-full bg-gray-950/40 border border-gray-800 rounded-lg px-2.5 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  {/* Fine Amount Input */}
+                  <div className={!isFined ? 'opacity-40 pointer-events-none' : ''}>
+                    <label className="block text-gray-500 text-[10px] uppercase font-semibold mb-1">Fine Amount (₦)</label>
+                    <input 
+                      type="number" 
+                      min="1000" 
+                      max="100000" 
+                      step="1000"
+                      value={fineAmount}
+                      onChange={e => setFineAmount(parseFloat(e.target.value) || 0)}
+                      disabled={!isFined}
+                      className="w-full bg-gray-950/40 border border-gray-800 rounded-lg px-2.5 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Vehicle visual selection */}

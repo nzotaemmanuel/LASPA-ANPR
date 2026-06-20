@@ -58,6 +58,17 @@ model Event {
   // ── Raw payload (full JSON stored for inspection) ────────────────────────────
   rawPayload       String?   // stored as JSON string
 
+  // ── LASPA enforcement metrics ──────────────────────────────────────────────
+  isFined          Boolean   @default(false)
+  fineAmount       Float     @default(0.0)
+  isDisputed       Boolean   @default(false)
+  isClamped        Boolean   @default(false)
+  isTowed          Boolean   @default(false)
+  isImpounded      Boolean   @default(false)
+  isBooked         Boolean   @default(false)
+  bookingHours     Float     @default(0.0)
+  revenue          Float     @default(0.0)
+
   @@index([plateNumber])
   @@index([timestamp])
   @@index([cameraId])

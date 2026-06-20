@@ -11,6 +11,9 @@ const pendingJPEGs = new Map();
 
 function getCleanIp(req) {
   let ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+  if (ip && ip.includes(',')) {
+    ip = ip.split(',')[0].trim();
+  }
   if (ip.startsWith('::ffff:')) {
     ip = ip.substring(7);
   }
@@ -175,7 +178,7 @@ function saveBase64Image(base64Str, prefix = 'image') {
   }
 }
 
-function normalizePayload(body, files = []) {
+function normalizePayloadRaw(body, files = []) {
   // Find uploaded files by name if multipart form was sent
   let uploadedNormalImg = null;
   let uploadedLpImg = null;
@@ -392,6 +395,101 @@ function normalizePayload(body, files = []) {
   };
 }
 
+function normalizePayload(body, files = []) {
+  const resultObj = normalizePayloadRaw(body, files);
+
+  // Extract enforcement metrics
+  const getBool = (k) => {
+    if (body[k] !== undefined) return body[k] === true || body[k] === 'true';
+    if (body.result && body.result[k] !== undefined) return body.result[k] === true || body.result[k] === 'true';
+    return undefined;
+  };
+  
+  const getFloat = (k) => {
+    if (body[k] !== undefined) return parseFloat(body[k]);
+    if (body.result && body.result[k] !== undefined) return parseFloat(body.result[k]);
+    return undefined;
+  };
+
+  const isFinedVal = getBool('isFined');
+  const isBookedVal = getBool('isBooked');
+
+  const hasEnforcementFields = isFinedVal !== undefined || isBookedVal !== undefined;
+
+  let finalIsFined = false;
+  let finalFineAmount = 0.0;
+  let finalIsDisputed = false;
+  let finalIsClamped = false;
+  let finalIsTowed = false;
+  let finalIsImpounded = false;
+  let finalIsBooked = false;
+  let finalBookingHours = 0.0;
+  let finalRevenue = 0.0;
+
+  if (hasEnforcementFields) {
+    finalIsFined = isFinedVal ?? false;
+    finalFineAmount = getFloat('fineAmount') ?? 0.0;
+    finalIsDisputed = getBool('isDisputed') ?? false;
+    finalIsClamped = getBool('isClamped') ?? false;
+    finalIsTowed = getBool('isTowed') ?? false;
+    finalIsImpounded = getBool('isImpounded') ?? false;
+    finalIsBooked = isBookedVal ?? false;
+    finalBookingHours = getFloat('bookingHours') ?? 0.0;
+    finalRevenue = getFloat('revenue') ?? 0.0;
+  } else {
+    // Dynamic fallback generation based on speed or random probabilities
+    const speed = resultObj.triggerSpeed;
+    const limit = resultObj.triggerSpeedLimit;
+    if (speed && limit && speed > limit) {
+      finalIsFined = true;
+      finalFineAmount = 25000;
+      finalIsDisputed = Math.random() < 0.2;
+      finalIsClamped = Math.random() < 0.1;
+      finalIsTowed = Math.random() < 0.05;
+      finalIsImpounded = Math.random() < 0.02;
+    } else {
+      if (Math.random() < 0.08) {
+        finalIsFined = true;
+        finalFineAmount = 15000;
+        finalIsDisputed = Math.random() < 0.15;
+        finalIsClamped = Math.random() < 0.3;
+        finalIsTowed = finalIsClamped && Math.random() < 0.4;
+        finalIsImpounded = finalIsTowed && Math.random() < 0.3;
+      }
+    }
+
+    if (Math.random() < 0.15 && !finalIsFined) {
+      finalIsBooked = true;
+      finalBookingHours = parseFloat((1 + Math.random() * 7).toFixed(1));
+    }
+
+    let rev = 0;
+    if (finalIsBooked) {
+      rev += finalBookingHours * 500;
+    }
+    if (finalIsFined && !finalIsDisputed) {
+      rev += finalFineAmount;
+    }
+    if (finalIsClamped) rev += 10000;
+    if (finalIsTowed) rev += 20000;
+    if (finalIsImpounded) rev += 35000;
+    finalRevenue = rev;
+  }
+
+  return {
+    ...resultObj,
+    isFined: finalIsFined,
+    fineAmount: finalFineAmount,
+    isDisputed: finalIsDisputed,
+    isClamped: finalIsClamped,
+    isTowed: finalIsTowed,
+    isImpounded: finalIsImpounded,
+    isBooked: finalIsBooked,
+    bookingHours: finalBookingHours,
+    revenue: finalRevenue
+  };
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Wildcard/pattern matching for FlagList
 // ──────────────────────────────────────────────────────────────────────────────
@@ -506,7 +604,10 @@ async function handleIngestion(req, res) {
         // Found a recent JSON request from this IP
         console.log(`[INGEST] Found matching recent JSON event ${recentJson.eventId} for IP ${sourceIp}`);
         
-        if (recentJson.imageUrl && recentJson.imageUrl !== '/uploads/default_vehicle.jpg') {
+        if (recentJson.imageUrl && 
+            recentJson.imageUrl !== '/uploads/default_vehicle.jpg' && 
+            !recentJson.imageUrl.startsWith('http://') && 
+            !recentJson.imageUrl.startsWith('https://')) {
           // The JSON request already had the image (base64) and saved it
           console.log(`[INGEST] JSON event already has image: ${recentJson.imageUrl}. Deleting duplicate upload.`);
           try {
@@ -534,8 +635,8 @@ async function handleIngestion(req, res) {
         }
       } else {
         // No recent JSON metadata found yet. The JPEG might have arrived first.
-        // We will wait for the JSON metadata up to 1500ms using a Promise delay.
-        console.log(`[INGEST] No recent JSON found for IP ${sourceIp}. Waiting up to 1500ms for metadata...`);
+        // We will wait for the JSON metadata up to 3000ms using a Promise delay.
+        console.log(`[INGEST] No recent JSON found for IP ${sourceIp}. Waiting up to 3000ms for metadata...`);
         let resolvedEvent = null;
         
         await new Promise((resolve) => {
@@ -554,7 +655,7 @@ async function handleIngestion(req, res) {
               pendingJPEGs.delete(sourceIp);
               resolve(null);
             }
-          }, 1500);
+          }, 3000);
         }).then((evt) => {
           resolvedEvent = evt;
         });
@@ -665,6 +766,16 @@ async function handleIngestion(req, res) {
         gpsLon:           normalized.gpsLon,
         // Raw payload
         rawPayload:       normalized.rawPayload,
+        // LASPA enforcement metrics
+        isFined:          normalized.isFined,
+        fineAmount:       normalized.fineAmount,
+        isDisputed:       normalized.isDisputed,
+        isClamped:        normalized.isClamped,
+        isTowed:          normalized.isTowed,
+        isImpounded:      normalized.isImpounded,
+        isBooked:         normalized.isBooked,
+        bookingHours:     normalized.bookingHours,
+        revenue:          normalized.revenue,
       },
     });
 

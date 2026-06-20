@@ -8,13 +8,34 @@ router.get('/', async (req, res) => {
     const now = new Date();
     const past24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    // 1. Fetch KPI metrics
-    const [totalEvents, flaggedCount, avgConfidenceResult, uniqueCameras] = await Promise.all([
+    // 1. Fetch LASPA KPI metrics
+    const [
+      totalScanned,
+      totalFined,
+      totalDisputed,
+      totalClamped,
+      totalTowed,
+      totalImpounded,
+      totalBookings,
+      bookingHoursSum,
+      revenueSum,
+      uniqueCameras
+    ] = await Promise.all([
       prisma.event.count(),
-      prisma.event.count({ where: { isFlagged: true } }),
+      prisma.event.count({ where: { isFined: true } }),
+      prisma.event.count({ where: { isDisputed: true } }),
+      prisma.event.count({ where: { isClamped: true } }),
+      prisma.event.count({ where: { isTowed: true } }),
+      prisma.event.count({ where: { isImpounded: true } }),
+      prisma.event.count({ where: { isBooked: true } }),
       prisma.event.aggregate({
-        _avg: {
-          confidence: true
+        _sum: {
+          bookingHours: true
+        }
+      }),
+      prisma.event.aggregate({
+        _sum: {
+          revenue: true
         }
       }),
       prisma.event.groupBy({
@@ -27,8 +48,12 @@ router.get('/', async (req, res) => {
       })
     ]);
 
-    const avgConfidence = avgConfidenceResult._avg.confidence 
-      ? parseFloat(avgConfidenceResult._avg.confidence.toFixed(1)) 
+    const totalBookingHours = bookingHoursSum._sum.bookingHours 
+      ? parseFloat(bookingHoursSum._sum.bookingHours.toFixed(1)) 
+      : 0;
+
+    const totalRevenue = revenueSum._sum.revenue 
+      ? parseFloat(revenueSum._sum.revenue.toFixed(2)) 
       : 0;
 
     // 2. Camera activity breakdown (all-time counts)
@@ -103,10 +128,15 @@ router.get('/', async (req, res) => {
 
     res.json({
       summary: {
-        totalCaptures: totalEvents,
-        flaggedAlerts: flaggedCount,
-        averageConfidence: avgConfidence,
-        activeCameras: uniqueCameras.length
+        totalScanned,
+        totalFined,
+        totalDisputed,
+        totalClamped,
+        totalTowed,
+        totalImpounded,
+        totalBookings,
+        totalBookingHours,
+        totalRevenue,
       },
       charts: {
         hourlyTraffic: hourlyData,

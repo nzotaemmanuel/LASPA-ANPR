@@ -70,150 +70,98 @@ export default function LiveFeed({ liveEvents, wsStatus }) {
           {liveEvents.map((event, idx) => (
             <div 
               key={event.id || idx}
-              className={`glass-panel rounded-2xl overflow-hidden transition-all duration-300 flex flex-col ${
+              className={`glass-panel rounded-2xl overflow-hidden transition-all duration-300 flex flex-col p-4 space-y-3 ${
                 event.isFlagged 
                   ? 'glow-red border-red-500/40 bg-red-950/5' 
                   : 'border-gray-800/80 hover:border-cyan-500/30'
               }`}
             >
-              
-              {/* Image Container */}
-              <div className="relative h-44 bg-black/60 flex items-center justify-center overflow-hidden group border-b border-gray-800/80">
-                {event.imageUrl && !event.imageUrl.includes('/uploads/default') ? (
-                  <img 
-                    src={event.imageUrl} 
-                    alt="License plate capture"
-                    onError={(e) => {
-                      e.target.src = 'https://images.unsplash.com/photo-1506521788723-868151859b87?q=80&w=600';
-                    }}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center text-gray-500">
-                    <FileImage className="w-10 h-10 mb-2" />
-                    <span className="text-xs">No image available</span>
-                  </div>
-                )}
-                
-                {/* Timestamp overlay */}
-                <div className="absolute top-3 right-3 flex items-center space-x-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1.5 rounded-lg border border-white/10 text-xs">
-                  <Clock className="w-3.5 h-3.5 text-cyan-400" />
-                  <span className="font-semibold text-white">
-                    {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              {/* Card Header: Sensor Node & Timestamp */}
+              <div className="flex justify-between items-center text-xs border-b border-gray-800 pb-2">
+                <div className="flex items-center space-x-1.5 text-gray-400">
+                  <Camera className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="font-bold text-white">{event.cameraId}</span>
+                </div>
+                <div className="flex items-center space-x-1 text-gray-500 font-medium">
+                  <Clock className="w-3 h-3 text-cyan-500/70" />
+                  <span>{new Date(event.timestamp).toLocaleTimeString()}</span>
+                </div>
+              </div>
+
+              {/* License Plate Card */}
+              <div className="bg-gray-950/40 p-3 rounded-xl border border-gray-800/40 flex items-center justify-center">
+                <div className="euro-plate">
+                  <span className="euro-blue-bar">
+                    {event.anprCountry || event.countryShort || 'NGR'}
+                  </span>
+                  <span className="license-plate-font font-bold text-gray-900 px-2 text-lg md:text-xl py-0.5 select-all">
+                    {event.plateNumber}
                   </span>
                 </div>
+              </div>
 
-                {/* Flagged badge */}
-                {event.isFlagged && (
-                  <div className="absolute top-3 left-3 bg-red-600 text-white px-2.5 py-1.5 rounded-lg border border-red-500 text-[10px] font-extrabold uppercase tracking-widest flex items-center">
-                    <ShieldAlert className="w-3.5 h-3.5 mr-1.5 animate-bounce" />
-                    {event.flagReason}
-                  </div>
-                )}
-
-                {/* Speed badge (real camera) */}
-                {event.triggerSpeed != null && (
-                  <div className="absolute bottom-3 left-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1.5 rounded-lg border border-white/10 text-xs">
-                    <Gauge className="w-3 h-3 text-amber-400" />
-                    <span className="text-amber-300 font-bold">{event.triggerSpeed.toFixed(1)} km/h</span>
-                    {event.triggerSpeedLimit && (
-                      <span className="text-gray-400">/ {event.triggerSpeedLimit.toFixed(0)}</span>
-                    )}
-                  </div>
-                )}
-
-                {/* Direction badge */}
-                {event.triggerDirection && (
-                  <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-black/70 backdrop-blur-md px-2 py-1.5 rounded-lg border border-white/10 text-[10px] text-gray-300">
-                    <ArrowRight className="w-3 h-3 text-cyan-400" />
-                    <span className="capitalize">{event.triggerDirection}</span>
-                  </div>
+              {/* Confidence and GPS Location */}
+              <div className="flex justify-between items-center text-[10px] text-gray-500">
+                <div>
+                  OCR Confidence: <span className={`font-bold ${
+                    event.confidence >= 90 ? 'text-emerald-400' : event.confidence >= 75 ? 'text-amber-400' : 'text-red-400'
+                  }`}>{event.confidence}%</span>
+                </div>
+                {event.gpsLat && event.gpsLon && (
+                  <a
+                    href={`https://maps.google.com/?q=${event.gpsLat},${event.gpsLon}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-0.5 text-cyan-600 hover:text-cyan-400 transition-colors font-semibold"
+                  >
+                    <MapPin className="w-3 h-3" />
+                    Map
+                  </a>
                 )}
               </div>
 
-              {/* Data Specifications body */}
-              <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-
-                {/* Camera ID + Confidence */}
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="text-[10px] text-gray-500 uppercase font-semibold tracking-wider">Node Sensor ID</span>
-                    <p className="font-bold text-white text-sm mt-0.5">{event.cameraId}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[10px] text-gray-500 uppercase font-semibold tracking-wider">OCR Confidence</span>
-                    <p className={`font-bold text-sm mt-0.5 ${
-                      event.confidence >= 90 ? 'text-emerald-400' : event.confidence >= 75 ? 'text-amber-400' : 'text-red-400'
-                    }`}>
-                      {event.confidence}%
-                    </p>
-                  </div>
-                </div>
-
-                {/* License Plate */}
-                <div className="bg-gray-950/40 p-3 rounded-xl border border-gray-800/40 flex items-center justify-center">
-                  <div className="euro-plate">
-                    <span className="euro-blue-bar">
-                      {event.anprCountry || event.countryShort || 'NGR'}
-                    </span>
-                    <span className="license-plate-font font-bold text-gray-900 px-2 text-lg md:text-xl py-0.5 select-all">
-                      {event.plateNumber}
-                    </span>
-                  </div>
-                </div>
-
-                {/* MMR enrichment row (real camera only) */}
-                {(event.mmrMake || event.mmrModel || event.mmrColor || event.mmrCategory) && (
-                  <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-indigo-950/20 border border-indigo-500/15">
-                    <Car className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                    <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] min-w-0">
-                      {event.mmrMake && <span className="text-indigo-300 font-semibold">{event.mmrMake}</span>}
-                      {event.mmrModel && <span className="text-indigo-200">{event.mmrModel}</span>}
-                      {event.mmrSubmodel && <span className="text-indigo-200/60">{event.mmrSubmodel}</span>}
-                      {event.mmrColor && (
-                        <span className="text-gray-400">· {event.mmrColor}</span>
-                      )}
-                      {event.mmrCategory && (
-                        <span className="text-gray-500 ml-auto">({event.mmrCategory})</span>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Country / GPS row */}
-                {(event.countryLong || event.location || event.gpsLat) && (
-                  <div className="flex items-center gap-2 text-[10px] text-gray-500 px-1">
-                    {(event.countryLong || event.location) && (
-                      <>
-                        <Globe className="w-3 h-3 text-gray-600 shrink-0" />
-                        <span>{[event.location, event.countryLong, event.stateLong].filter(Boolean).join(' · ')}</span>
-                      </>
-                    )}
-                    {event.gpsLat && event.gpsLon && (
-                      <a
-                        href={`https://maps.google.com/?q=${event.gpsLat},${event.gpsLon}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="ml-auto flex items-center gap-0.5 text-cyan-600 hover:text-cyan-400 transition-colors"
-                      >
-                        <MapPin className="w-3 h-3" />
-                        Map
-                      </a>
-                    )}
-                  </div>
-                )}
-
-                {/* Status footer */}
-                <div className="pt-2 border-t border-gray-800/60 flex items-center justify-between text-xs text-gray-400">
-                  <div className="flex items-center space-x-1.5">
-                    <CheckCircle className={`w-3.5 h-3.5 ${event.isFlagged ? 'text-red-400' : 'text-emerald-400'}`} />
-                    <span>Status: {event.isFlagged ? 'Flagged Watchlist' : 'Verified Cleared'}</span>
-                  </div>
-                  <span className="text-[10px] text-gray-500">
-                    {new Date(event.timestamp).toLocaleDateString()}
+              {/* Status and Enforcement Badges */}
+              <div className="pt-2 border-t border-gray-800/60 flex flex-wrap gap-1 justify-start">
+                {event.isBooked && (
+                  <span className="px-2 py-0.5 rounded bg-blue-950/40 border border-blue-500/20 text-blue-400 font-semibold text-[10px] uppercase">
+                    Booked ({event.bookingHours}h)
                   </span>
-                </div>
-
+                )}
+                {event.isFined && (
+                  <span className="px-2 py-0.5 rounded bg-red-950/40 border border-red-500/20 text-red-400 font-semibold text-[10px] uppercase">
+                    Fined (₦{event.fineAmount?.toLocaleString()})
+                  </span>
+                )}
+                {event.isDisputed && (
+                  <span className="px-2 py-0.5 rounded bg-amber-950/40 border border-amber-500/20 text-amber-400 font-semibold text-[10px] uppercase">
+                    Disputed
+                  </span>
+                )}
+                {event.isClamped && (
+                  <span className="px-2 py-0.5 rounded bg-indigo-950/40 border border-indigo-500/20 text-indigo-400 font-semibold text-[10px] uppercase">
+                    Clamped
+                  </span>
+                )}
+                {event.isTowed && (
+                  <span className="px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20 text-emerald-400 font-semibold text-[10px] uppercase">
+                    Towed
+                  </span>
+                )}
+                {event.isImpounded && (
+                  <span className="px-2 py-0.5 rounded bg-rose-950/40 border border-rose-500/20 text-rose-400 font-semibold text-[10px] uppercase">
+                    Impounded
+                  </span>
+                )}
+                {event.isFlagged && (
+                  <span className="px-2 py-0.5 rounded bg-red-900/50 border border-red-500/30 text-red-300 font-semibold text-[10px] uppercase tracking-wider">
+                    Watchlist: {event.flagReason}
+                  </span>
+                )}
+                {!event.isBooked && !event.isFined && !event.isClamped && !event.isTowed && !event.isImpounded && !event.isFlagged && (
+                  <span className="px-2 py-0.5 rounded bg-emerald-950/20 border border-emerald-500/10 text-emerald-400 font-medium text-[10px] uppercase">
+                    Cleared
+                  </span>
+                )}
               </div>
 
             </div>

@@ -270,12 +270,9 @@ export default function HistoryPanel({ role }) {
               <table className="w-full text-left text-sm text-gray-300">
                 <thead>
                   <tr className="border-b border-gray-800 bg-gray-900/15 text-gray-400 text-xs font-semibold uppercase">
-                    <th className="py-3 px-4">Image</th>
                     <th className="py-3 px-4">Timestamp</th>
                     <th className="py-3 px-4">Sensor Node</th>
                     <th className="py-3 px-4">Plate Number</th>
-                    <th className="py-3 px-4">Vehicle</th>
-                    <th className="py-3 px-4">Speed</th>
                     <th className="py-3 px-4">Confidence</th>
                     <th className="py-3 px-4 text-right">Status</th>
                   </tr>
@@ -288,18 +285,6 @@ export default function HistoryPanel({ role }) {
                         event.isFlagged ? 'bg-red-950/5' : ''
                       }`}
                     >
-                      {/* Thumbnail */}
-                      <td className="py-3 px-4">
-                        <div className="w-16 h-10 rounded-lg overflow-hidden border border-gray-800 bg-black/40 flex justify-center items-center">
-                          <img 
-                            src={event.imageUrl} 
-                            alt="Plate crop" 
-                            onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?q=80&w=200'; }}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      </td>
-
                       {/* Timestamp */}
                       <td className="py-3 px-4 font-medium text-xs text-gray-400">
                         {new Date(event.timestamp).toLocaleString()}
@@ -318,35 +303,6 @@ export default function HistoryPanel({ role }) {
                         </div>
                       </td>
 
-                      {/* MMR — Make / Model / Color */}
-                      <td className="py-3 px-4">
-                        {event.mmrMake ? (
-                          <div className="space-y-0.5">
-                            <p className="text-xs font-semibold text-indigo-300">{event.mmrMake} {event.mmrModel}</p>
-                            <p className="text-[10px] text-gray-500">{[event.mmrColor, event.mmrCategory].filter(Boolean).join(' · ')}</p>
-                          </div>
-                        ) : (
-                          <span className="text-gray-700 text-xs">—</span>
-                        )}
-                      </td>
-
-                      {/* Trigger speed */}
-                      <td className="py-3 px-4">
-                        {event.triggerSpeed != null ? (
-                          <div className="space-y-0.5">
-                            <p className={`text-xs font-bold ${
-                              event.triggerSpeedLimit && event.triggerSpeed > event.triggerSpeedLimit
-                                ? 'text-red-400' : 'text-emerald-400'
-                            }`}>{event.triggerSpeed.toFixed(1)} km/h</p>
-                            {event.triggerDirection && (
-                              <p className="text-[10px] text-gray-500 capitalize">{event.triggerDirection}</p>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-gray-700 text-xs">—</span>
-                        )}
-                      </td>
-
                       {/* Confidence */}
                       <td className="py-3 px-4">
                         <span className={`font-semibold text-xs ${
@@ -356,16 +312,48 @@ export default function HistoryPanel({ role }) {
 
                       {/* Status */}
                       <td className="py-3 px-4 text-right">
-                        {event.isFlagged ? (
-                          <span className="px-2 py-1 rounded bg-red-950/50 border border-red-500/20 text-red-400 font-semibold text-[10px] uppercase tracking-wider flex items-center justify-end w-fit ml-auto">
-                            <AlertTriangle className="w-3 h-3 mr-1" />
-                            {event.flagReason}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 rounded bg-emerald-950/20 border border-emerald-500/10 text-emerald-400 font-medium text-[10px] uppercase">
-                            Cleared
-                          </span>
-                        )}
+                        <div className="flex flex-wrap gap-1 justify-end">
+                          {event.isBooked && (
+                            <span className="px-2 py-0.5 rounded bg-blue-950/40 border border-blue-500/20 text-blue-400 font-semibold text-[10px] uppercase">
+                              Booked ({event.bookingHours}h)
+                            </span>
+                          )}
+                          {event.isFined && (
+                            <span className="px-2 py-0.5 rounded bg-red-950/40 border border-red-500/20 text-red-400 font-semibold text-[10px] uppercase">
+                              Fined (₦{event.fineAmount?.toLocaleString()})
+                            </span>
+                          )}
+                          {event.isDisputed && (
+                            <span className="px-2 py-0.5 rounded bg-amber-950/40 border border-amber-500/20 text-amber-400 font-semibold text-[10px] uppercase">
+                              Disputed
+                            </span>
+                          )}
+                          {event.isClamped && (
+                            <span className="px-2 py-0.5 rounded bg-indigo-950/40 border border-indigo-500/20 text-indigo-400 font-semibold text-[10px] uppercase">
+                              Clamped
+                            </span>
+                          )}
+                          {event.isTowed && (
+                            <span className="px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20 text-emerald-400 font-semibold text-[10px] uppercase">
+                              Towed
+                            </span>
+                          )}
+                          {event.isImpounded && (
+                            <span className="px-2 py-0.5 rounded bg-rose-950/40 border border-rose-500/20 text-rose-400 font-semibold text-[10px] uppercase">
+                              Impounded
+                            </span>
+                          )}
+                          {event.isFlagged && (
+                            <span className="px-2 py-0.5 rounded bg-red-900/50 border border-red-500/30 text-red-300 font-semibold text-[10px] uppercase tracking-wider">
+                              Watchlist
+                            </span>
+                          )}
+                          {!event.isBooked && !event.isFined && !event.isClamped && !event.isTowed && !event.isImpounded && !event.isFlagged && (
+                            <span className="px-2 py-0.5 rounded bg-emerald-950/20 border border-emerald-500/10 text-emerald-400 font-medium text-[10px] uppercase">
+                              Cleared
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

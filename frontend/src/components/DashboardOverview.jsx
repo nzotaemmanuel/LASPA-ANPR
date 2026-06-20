@@ -8,7 +8,12 @@ import {
   Clock, 
   Search,
   Eye,
-  Activity
+  Activity,
+  Lock,
+  Coins,
+  Scale,
+  Truck,
+  FileText
 } from 'lucide-react';
 import { Line, Bar } from 'react-chartjs-2';
 import {
@@ -40,10 +45,15 @@ ChartJS.register(
 
 export default function DashboardOverview({ role, liveEvents, setActiveTab }) {
   const [metrics, setMetrics] = useState({
-    totalCaptures: 0,
-    flaggedAlerts: 0,
-    averageConfidence: 0,
-    activeCameras: 0
+    totalScanned: 0,
+    totalFined: 0,
+    totalDisputed: 0,
+    totalClamped: 0,
+    totalTowed: 0,
+    totalImpounded: 0,
+    totalBookings: 0,
+    totalBookingHours: 0,
+    totalRevenue: 0
   });
 
   const [hourlyTraffic, setHourlyTraffic] = useState([]);
@@ -54,9 +64,13 @@ export default function DashboardOverview({ role, liveEvents, setActiveTab }) {
     try {
       const res = await fetch(getApiUrl('/api/analytics'));
       const data = await res.json();
-      setMetrics(data.summary);
-      setHourlyTraffic(data.charts.hourlyTraffic || []);
-      setCameraActivity(data.charts.cameraActivity || []);
+      if (data && data.summary) {
+        setMetrics(data.summary);
+      }
+      if (data && data.charts) {
+        setHourlyTraffic(data.charts.hourlyTraffic || []);
+        setCameraActivity(data.charts.cameraActivity || []);
+      }
     } catch (e) {
       console.error('Failed to fetch analytics:', e);
     } finally {
@@ -170,82 +184,158 @@ export default function DashboardOverview({ role, liveEvents, setActiveTab }) {
       </div>
 
       {/* Bento-grid KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
         
-        {/* KPI 1: Total Passes */}
+        {/* KPI 1: Total Scanned */}
         <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
           <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
-            <Car className="w-28 h-28 text-white" />
+            <Car className="w-24 h-24 text-white" />
           </div>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Total Captures</span>
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Total Scanned Vehicles</span>
             <div className="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-500/20 flex items-center justify-center">
               <Car className="w-4.5 h-4.5 text-cyan-400" />
             </div>
           </div>
-          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : metrics.totalCaptures}</p>
-          <div className="flex items-center mt-2 text-xs text-emerald-400 font-medium">
-            <TrendingUp className="w-3.5 h-3.5 mr-1" />
-            <span>Operational status: Normal</span>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : (metrics.totalScanned ?? 0).toLocaleString()}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Total scanned plates count</span>
           </div>
         </div>
 
-        {/* KPI 2: Flagged Alerts */}
-        <div className={`glass-panel p-5 rounded-2xl border transition-all duration-300 shadow-md relative overflow-hidden group ${
-          metrics.flaggedAlerts > 0 ? 'border-red-900/60 bg-red-950/10' : 'border-gray-800/80'
-        }`}>
-          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none">
-            <AlertTriangle className="w-28 h-28 text-white" />
+        {/* KPI 2: Vehicles Fined */}
+        <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <AlertTriangle className="w-24 h-24 text-white" />
           </div>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Security Alerts</span>
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              metrics.flaggedAlerts > 0 
-                ? 'bg-red-950/40 border border-red-500/30' 
-                : 'bg-gray-800 border border-gray-700'
-            }`}>
-              <AlertTriangle className={`w-4.5 h-4.5 ${metrics.flaggedAlerts > 0 ? 'text-red-400 animate-pulse' : 'text-gray-400'}`} />
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Vehicles Fined</span>
+            <div className="w-8 h-8 rounded-lg bg-red-950/40 border border-red-500/20 flex items-center justify-center">
+              <AlertTriangle className="w-4.5 h-4.5 text-red-400" />
             </div>
           </div>
-          <p className={`text-3xl font-extrabold tracking-tight ${metrics.flaggedAlerts > 0 ? 'text-red-400' : 'text-white'}`}>
-            {loading ? '...' : metrics.flaggedAlerts}
-          </p>
-          <div className="flex items-center mt-2 text-xs text-gray-400">
-            <span>Requires driver verification</span>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : (metrics.totalFined ?? 0).toLocaleString()}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Vehicles flagged with active fines</span>
           </div>
         </div>
 
-        {/* KPI 3: Average OCR Accuracy */}
+        {/* KPI 3: Disputed Fines */}
         <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
-          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none">
-            <CheckCircle className="w-28 h-28 text-white" />
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <Scale className="w-24 h-24 text-white" />
           </div>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">OCR Accuracy</span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-950/40 border border-emerald-500/20 flex items-center justify-center">
-              <CheckCircle className="w-4.5 h-4.5 text-emerald-400" />
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Disputed Fines</span>
+            <div className="w-8 h-8 rounded-lg bg-amber-950/40 border border-amber-500/20 flex items-center justify-center">
+              <Scale className="w-4.5 h-4.5 text-amber-400" />
             </div>
           </div>
-          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : `${metrics.averageConfidence}%`}</p>
-          <div className="flex items-center mt-2 text-xs text-emerald-400 font-medium">
-            <span>High confidence yield</span>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : (metrics.totalDisputed ?? 0).toLocaleString()}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Fines currently under dispute</span>
           </div>
         </div>
 
-        {/* KPI 4: Active Cameras */}
+        {/* KPI 4: Clamped Vehicles */}
         <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
-          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none">
-            <Camera className="w-28 h-28 text-white" />
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <Lock className="w-24 h-24 text-white" />
           </div>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Active Cameras</span>
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Clamped Vehicles</span>
             <div className="w-8 h-8 rounded-lg bg-indigo-950/40 border border-indigo-500/20 flex items-center justify-center">
-              <Camera className="w-4.5 h-4.5 text-indigo-400" />
+              <Lock className="w-4.5 h-4.5 text-indigo-400" />
             </div>
           </div>
-          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : metrics.activeCameras}</p>
-          <div className="flex items-center mt-2 text-xs text-gray-400">
-            <span>Active nodes in 24h</span>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : (metrics.totalClamped ?? 0).toLocaleString()}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Vehicles clamped for violations</span>
+          </div>
+        </div>
+
+        {/* KPI 5: Towed Vehicles */}
+        <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <Truck className="w-24 h-24 text-white" />
+          </div>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Towed Vehicles</span>
+            <div className="w-8 h-8 rounded-lg bg-emerald-950/40 border border-emerald-500/20 flex items-center justify-center">
+              <Truck className="w-4.5 h-4.5 text-emerald-400" />
+            </div>
+          </div>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : (metrics.totalTowed ?? 0).toLocaleString()}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Vehicles towed from restriction zones</span>
+          </div>
+        </div>
+
+        {/* KPI 6: Impounded Vehicles */}
+        <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <FileText className="w-24 h-24 text-white" />
+          </div>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Impounded Vehicles</span>
+            <div className="w-8 h-8 rounded-lg bg-rose-950/40 border border-rose-500/20 flex items-center justify-center">
+              <FileText className="w-4.5 h-4.5 text-rose-400" />
+            </div>
+          </div>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : (metrics.totalImpounded ?? 0).toLocaleString()}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Vehicles impounded in depots</span>
+          </div>
+        </div>
+
+        {/* KPI 7: Bookings */}
+        <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <CheckCircle className="w-24 h-24 text-white" />
+          </div>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Total Bookings</span>
+            <div className="w-8 h-8 rounded-lg bg-violet-950/40 border border-violet-500/20 flex items-center justify-center">
+              <CheckCircle className="w-4.5 h-4.5 text-violet-400" />
+            </div>
+          </div>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : (metrics.totalBookings ?? 0).toLocaleString()}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Approved parking bookings count</span>
+          </div>
+        </div>
+
+        {/* KPI 8: Booking Hours */}
+        <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <Clock className="w-24 h-24 text-white" />
+          </div>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Total Booking Hours</span>
+            <div className="w-8 h-8 rounded-lg bg-blue-950/40 border border-blue-500/20 flex items-center justify-center">
+              <Clock className="w-4.5 h-4.5 text-blue-400" />
+            </div>
+          </div>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : `${(metrics.totalBookingHours ?? 0).toLocaleString()} hrs`}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Aggregated parking hours</span>
+          </div>
+        </div>
+
+        {/* KPI 9: Revenue */}
+        <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md relative overflow-hidden group">
+          <div className="absolute right-4 bottom-2 opacity-5 pointer-events-none group-hover:scale-110 transition-transform">
+            <Coins className="w-24 h-24 text-white" />
+          </div>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Total Revenue</span>
+            <div className="w-8 h-8 rounded-lg bg-amber-950/40 border border-amber-500/20 flex items-center justify-center">
+              <Coins className="w-4.5 h-4.5 text-amber-400" />
+            </div>
+          </div>
+          <p className="text-3xl font-extrabold text-white tracking-tight">{loading ? '...' : `₦${(metrics.totalRevenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}</p>
+          <div className="flex items-center mt-2 text-xs text-gray-500">
+            <span>Fines and bookings collection</span>
           </div>
         </div>
 
@@ -348,15 +438,38 @@ export default function DashboardOverview({ role, liveEvents, setActiveTab }) {
                       }`}>{event.confidence}%</span>
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      {event.isFlagged ? (
-                        <span className="px-2 py-1.5 rounded-lg bg-red-950/40 text-red-400 border border-red-500/20 font-bold text-[10px] uppercase tracking-wider">
-                          ALERT: {event.flagReason}
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1.5 rounded-lg bg-emerald-950/30 text-emerald-400 border border-emerald-500/10 font-medium text-[10px] uppercase">
-                          Cleared
-                        </span>
-                      )}
+                      <div className="flex flex-wrap gap-1 justify-end">
+                        {event.isBooked && (
+                          <span className="px-2 py-0.5 rounded bg-blue-950/40 border border-blue-500/20 text-blue-400 font-semibold text-[10px] uppercase">
+                            Booked ({event.bookingHours}h)
+                          </span>
+                        )}
+                        {event.isFined && (
+                          <span className="px-2 py-0.5 rounded bg-red-950/40 border border-red-500/20 text-red-400 font-semibold text-[10px] uppercase">
+                            Fined
+                          </span>
+                        )}
+                        {event.isClamped && (
+                          <span className="px-2 py-0.5 rounded bg-indigo-950/40 border border-indigo-500/20 text-indigo-400 font-semibold text-[10px] uppercase">
+                            Clamped
+                          </span>
+                        )}
+                        {event.isTowed && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20 text-emerald-400 font-semibold text-[10px] uppercase">
+                            Towed
+                          </span>
+                        )}
+                        {event.isFlagged && (
+                          <span className="px-2 py-0.5 rounded bg-red-900/50 border border-red-500/30 text-red-300 font-bold text-[10px] uppercase tracking-wider">
+                            Watchlist
+                          </span>
+                        )}
+                        {!event.isBooked && !event.isFined && !event.isClamped && !event.isTowed && !event.isFlagged && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-950/20 border border-emerald-500/10 text-emerald-400 font-medium text-[10px] uppercase">
+                            Cleared
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))

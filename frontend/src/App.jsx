@@ -89,7 +89,7 @@ export default function App() {
     
     const defaultWsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const fallbackUrl = import.meta.env.DEV 
-      ? `${defaultWsProtocol}//localhost:5000` 
+      ? `${defaultWsProtocol}//${window.location.hostname}:5000` 
       : `${defaultWsProtocol}//${window.location.host}/ws`;
       
     const socketUrl = import.meta.env.VITE_WS_BASE_URL || fallbackUrl;
@@ -297,18 +297,6 @@ export default function App() {
                   </p>
                 </div>
               </div>
-
-              {activeAlert.imageUrl && (
-                <div className="relative rounded-xl overflow-hidden border border-gray-800 bg-black max-h-48 flex justify-center items-center">
-                  <img 
-                    src={activeAlert.imageUrl} 
-                    alt="Vehicle" 
-                    onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?q=80&w=600'; }}
-                    className="w-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-                </div>
-              )}
 
               <button
                 onClick={() => setActiveAlert(null)}

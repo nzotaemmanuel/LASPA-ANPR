@@ -108,3 +108,5 @@ server.listen(PORT, async () => {
     console.warn('[DATABASE] Please ensure PostgreSQL is running and DATABASE_URL is correct in .env');
   }
 });
+// Trigger nodemon reload for database connection change
+
