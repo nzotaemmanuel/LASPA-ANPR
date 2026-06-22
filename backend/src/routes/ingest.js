@@ -21,6 +21,70 @@ function getCleanIp(req) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Ingestion forwarding helper (for secure relay to remote Render backend)
+// ──────────────────────────────────────────────────────────────────────────────
+async function forwardRequest(req) {
+  const targetUrl = process.env.FORWARD_TO_URL;
+  if (!targetUrl) return null;
+
+  console.log(`[FORWARDER] Relaying camera request to remote HTTPS server: ${targetUrl}`);
+
+  const headers = { ...req.headers };
+  delete headers['host'];
+  delete headers['connection'];
+  delete headers['content-length'];
+
+  let fetchBody;
+  const contentType = req.headers['content-type'] || '';
+
+  if (contentType.includes('application/json')) {
+    fetchBody = JSON.stringify(req.body);
+  } else if (contentType.includes('multipart/form-data')) {
+    const form = new globalThis.FormData();
+    
+    if (req.body) {
+      for (const [key, value] of Object.entries(req.body)) {
+        form.append(key, typeof value === 'object' ? JSON.stringify(value) : value);
+      }
+    }
+
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const fileBuffer = fs.readFileSync(file.path);
+        const blob = new globalThis.Blob([fileBuffer], { type: file.mimetype });
+        form.append(file.fieldname, blob, file.originalname);
+      }
+    }
+    fetchBody = form;
+    delete headers['content-type'];
+  } else {
+    fetchBody = req.body ? JSON.stringify(req.body) : undefined;
+  }
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers: headers,
+      body: fetchBody
+    });
+    
+    const resContentType = response.headers.get('content-type') || '';
+    const data = resContentType.includes('application/json') 
+      ? await response.json() 
+      : await response.text();
+      
+    return {
+      status: response.status,
+      data: data
+    };
+  } catch (err) {
+    console.error(`[FORWARDER] Relay to remote server failed:`, err.message);
+    throw err;
+  }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
 // In-memory raw payload log (circular buffer, max 50)
 // ──────────────────────────────────────────────────────────────────────────────
 const RAW_PAYLOAD_LOG_MAX = 50;
@@ -552,6 +616,34 @@ const upload = multer({ storage });
 // Core ingestion handler
 // ──────────────────────────────────────────────────────────────────────────────
 async function handleIngestion(req, res) {
+  // If forwarding is configured, relay the request to the remote HTTPS backend
+  if (process.env.FORWARD_TO_URL) {
+    try {
+      const result = await forwardRequest(req);
+      if (result) {
+        // Clean up temp files created by multer
+        if (req.files && req.files.length > 0) {
+          for (const file of req.files) {
+            try {
+              if (fs.existsSync(file.path)) {
+                fs.unlinkSync(file.path);
+              }
+            } catch (unlinkErr) {
+              console.error('[FORWARDER] Temp file cleanup error:', unlinkErr.message);
+            }
+          }
+        }
+        if (typeof result.data === 'object') {
+          return res.status(result.status).json(result.data);
+        } else {
+          return res.status(result.status).send(result.data);
+        }
+      }
+    } catch (err) {
+      return res.status(502).json({ error: `Bad Gateway: Ingestion relay failed: ${err.message}` });
+    }
+  }
+
   try {
     let body = req.body;
 
