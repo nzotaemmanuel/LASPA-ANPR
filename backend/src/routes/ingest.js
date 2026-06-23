@@ -41,7 +41,7 @@ async function forwardRequest(req) {
     fetchBody = JSON.stringify(req.body);
   } else if (contentType.includes('multipart/form-data')) {
     const form = new globalThis.FormData();
-    
+
     if (req.body) {
       for (const [key, value] of Object.entries(req.body)) {
         form.append(key, typeof value === 'object' ? JSON.stringify(value) : value);
@@ -67,12 +67,12 @@ async function forwardRequest(req) {
       headers: headers,
       body: fetchBody
     });
-    
+
     const resContentType = response.headers.get('content-type') || '';
-    const data = resContentType.includes('application/json') 
-      ? await response.json() 
+    const data = resContentType.includes('application/json')
+      ? await response.json()
       : await response.text();
-      
+
     return {
       status: response.status,
       data: data
@@ -124,8 +124,8 @@ function logRawPayload(req, body) {
       timestamp: body.timestamp,
       image: body.image
         ? (typeof body.image === 'string' && body.image.length > 80
-            ? body.image.substring(0, 80) + '…[truncated]'
-            : body.image)
+          ? body.image.substring(0, 80) + '…[truncated]'
+          : body.image)
         : undefined,
     };
   }
@@ -145,7 +145,7 @@ function logRawPayload(req, body) {
     // Full raw payload – truncate any base64 blobs that are very long
     rawBody: JSON.parse(JSON.stringify(body, (key, val) => {
       if (typeof val === 'string' && val.length > 500 &&
-          (key === 'normal_img' || key === 'lp_img' || key === 'aux_img' || key === 'image')) {
+        (key === 'normal_img' || key === 'lp_img' || key === 'aux_img' || key === 'image')) {
         return val.substring(0, 100) + '…[image truncated]';
       }
       return val;
@@ -173,7 +173,7 @@ function logRawPayload(req, body) {
  */
 function sanitizeCameraValue(val) {
   if (val === undefined || val === null) return null;
-  
+
   // If it's a number, convert to string for uniform processing
   let strVal = String(val).trim();
 
@@ -345,7 +345,7 @@ function normalizePayloadRaw(body, files = []) {
 
     // 4. Fallback to any uploaded image file in files array (regardless of field name)
     if (imageUrl === '/uploads/default_vehicle.jpg' && Array.isArray(files)) {
-      const imgFile = files.find(f => 
+      const imgFile = files.find(f =>
         f.mimetype && f.mimetype.startsWith('image/')
       );
       if (imgFile) {
@@ -431,7 +431,7 @@ function normalizePayloadRaw(body, files = []) {
 
   // Fallback to any uploaded image file in files array (regardless of field name)
   if (imageUrl === '/uploads/default_vehicle.jpg' && Array.isArray(files)) {
-    const imgFile = files.find(f => 
+    const imgFile = files.find(f =>
       f.mimetype && f.mimetype.startsWith('image/')
     );
     if (imgFile) {
@@ -468,7 +468,7 @@ function normalizePayload(body, files = []) {
     if (body.result && body.result[k] !== undefined) return body.result[k] === true || body.result[k] === 'true';
     return undefined;
   };
-  
+
   const getFloat = (k) => {
     if (body[k] !== undefined) return parseFloat(body[k]);
     if (body.result && body.result[k] !== undefined) return parseFloat(body.result[k]);
@@ -621,7 +621,7 @@ async function handleIngestion(req, res) {
     try {
       const result = await forwardRequest(req);
       if (result) {
-        // If remote returned a non-2xx (e.g. Render sleeping / 502), fall through to local processing
+        // Only relay the response if remote returned a successful 2xx
         if (result.status >= 200 && result.status < 300) {
           // Clean up temp files created by multer
           if (req.files && req.files.length > 0) {
@@ -641,14 +641,13 @@ async function handleIngestion(req, res) {
             return res.status(result.status).send(result.data);
           }
         } else {
-          console.warn(`[FORWARDER] Remote returned ${result.status}. Falling back to local processing.`);
-          // fall through to local ingestion below
+          // Remote returned non-2xx — fall through to local processing
+          console.warn(`[FORWARDER] Remote returned ${result.status}. Processing locally.`);
         }
       }
     } catch (err) {
-      // Remote is unreachable (sleeping, network error, etc.) — process locally so camera gets 200 OK
-      console.warn(`[FORWARDER] Relay failed (${err.message}). Falling back to local processing.`);
-      // fall through to local ingestion below
+      // Remote unreachable (Render sleeping, network error, etc.) — process locally
+      console.warn(`[FORWARDER] Relay failed: ${err.message}. Processing locally.`);
     }
   }
 
@@ -672,8 +671,8 @@ async function handleIngestion(req, res) {
 
     // Extract JSON payload from uploaded files if req.body is empty (for cameras uploading JSON as a file attachment)
     if ((!body || Object.keys(body).length === 0) && req.files && req.files.length > 0) {
-      const jsonFile = req.files.find(f => 
-        (f.originalname && f.originalname.toLowerCase().endsWith('.json')) || 
+      const jsonFile = req.files.find(f =>
+        (f.originalname && f.originalname.toLowerCase().endsWith('.json')) ||
         f.mimetype === 'application/json' ||
         f.fieldname === 'json' ||
         f.fieldname === 'UploadInfo'
@@ -697,17 +696,17 @@ async function handleIngestion(req, res) {
     if (isSplitJpeg) {
       const firstFile = req.files[0];
       console.log(`[INGEST] Received potential split JPEG request from IP: ${sourceIp}, file: ${firstFile.filename}`);
-      
+
       // Check if we recently processed a JSON request from this IP
       const recentJson = recentJSONs.get(sourceIp);
       if (recentJson && (Date.now() - recentJson.timestamp < 5000)) {
         // Found a recent JSON request from this IP
         console.log(`[INGEST] Found matching recent JSON event ${recentJson.eventId} for IP ${sourceIp}`);
-        
-        if (recentJson.imageUrl && 
-            recentJson.imageUrl !== '/uploads/default_vehicle.jpg' && 
-            !recentJson.imageUrl.startsWith('http://') && 
-            !recentJson.imageUrl.startsWith('https://')) {
+
+        if (recentJson.imageUrl &&
+          recentJson.imageUrl !== '/uploads/default_vehicle.jpg' &&
+          !recentJson.imageUrl.startsWith('http://') &&
+          !recentJson.imageUrl.startsWith('https://')) {
           // The JSON request already had the image (base64) and saved it
           console.log(`[INGEST] JSON event already has image: ${recentJson.imageUrl}. Deleting duplicate upload.`);
           try {
@@ -726,7 +725,7 @@ async function handleIngestion(req, res) {
             data: { imageUrl: updatedImageUrl }
           });
           console.log(`[INGEST] Updated Event ${recentJson.eventId} with uploaded JPEG image: ${updatedImageUrl}`);
-          
+
           const broadcast = req.app.get('broadcast');
           if (broadcast) {
             broadcast(updatedEvent);
@@ -738,7 +737,7 @@ async function handleIngestion(req, res) {
         // We will wait for the JSON metadata up to 3000ms using a Promise delay.
         console.log(`[INGEST] No recent JSON found for IP ${sourceIp}. Waiting up to 3000ms for metadata...`);
         let resolvedEvent = null;
-        
+
         await new Promise((resolve) => {
           let resolved = false;
           pendingJPEGs.set(sourceIp, {
@@ -749,7 +748,7 @@ async function handleIngestion(req, res) {
               resolve(evt);
             }
           });
-          
+
           setTimeout(() => {
             if (!resolved) {
               pendingJPEGs.delete(sourceIp);
@@ -759,7 +758,7 @@ async function handleIngestion(req, res) {
         }).then((evt) => {
           resolvedEvent = evt;
         });
-        
+
         if (resolvedEvent) {
           console.log(`[INGEST] Split JPEG successfully merged with JSON metadata from IP ${sourceIp}`);
           return res.status(200).json({ message: 'Image merged with metadata', event: resolvedEvent });
@@ -790,7 +789,7 @@ async function handleIngestion(req, res) {
         };
         if (!req.files) req.files = [];
         req.files.push(matchedFile);
-        
+
         pendingResolver = pendingJpeg.resolve;
         pendingJPEGs.delete(sourceIp);
       }
@@ -827,55 +826,55 @@ async function handleIngestion(req, res) {
     // 4. Save to database
     const event = await prisma.event.create({
       data: {
-        timestamp:        normalized.timestamp,
-        cameraId:         normalized.cameraId,
-        plateNumber:      normalized.plateNumber,
-        confidence:       normalized.confidence,
-        imageUrl:         normalized.imageUrl,
+        timestamp: normalized.timestamp,
+        cameraId: normalized.cameraId,
+        plateNumber: normalized.plateNumber,
+        confidence: normalized.confidence,
+        imageUrl: normalized.imageUrl,
         isFlagged,
         flagReason,
         // ANPR
-        anprType:         normalized.anprType,
-        anprCountry:      normalized.anprCountry,
-        anprState:        normalized.anprState,
-        anprBgColor:      normalized.anprBgColor,
-        anprColor:        normalized.anprColor,
-        anprResultCnt:    normalized.anprResultCnt,
+        anprType: normalized.anprType,
+        anprCountry: normalized.anprCountry,
+        anprState: normalized.anprState,
+        anprBgColor: normalized.anprBgColor,
+        anprColor: normalized.anprColor,
+        anprResultCnt: normalized.anprResultCnt,
         // MMR
-        mmrMake:          normalized.mmrMake,
-        mmrModel:         normalized.mmrModel,
-        mmrSubmodel:      normalized.mmrSubmodel,
-        mmrCategory:      normalized.mmrCategory,
-        mmrColor:         normalized.mmrColor,
-        mmrModelConf:     normalized.mmrModelConf,
-        mmrCategoryConf:  normalized.mmrCategoryConf,
-        mmrColorConf:     normalized.mmrColorConf,
+        mmrMake: normalized.mmrMake,
+        mmrModel: normalized.mmrModel,
+        mmrSubmodel: normalized.mmrSubmodel,
+        mmrCategory: normalized.mmrCategory,
+        mmrColor: normalized.mmrColor,
+        mmrModelConf: normalized.mmrModelConf,
+        mmrCategoryConf: normalized.mmrCategoryConf,
+        mmrColorConf: normalized.mmrColorConf,
         // Trigger
-        triggerSpeed:     normalized.triggerSpeed,
+        triggerSpeed: normalized.triggerSpeed,
         triggerSpeedLimit: normalized.triggerSpeedLimit,
         triggerDirection: normalized.triggerDirection,
-        triggerCategory:  normalized.triggerCategory,
-        triggerVclass:    normalized.triggerVclass,
+        triggerCategory: normalized.triggerCategory,
+        triggerVclass: normalized.triggerVclass,
         // Country / GPS
-        countryLong:      normalized.countryLong,
-        countryShort:     normalized.countryShort,
-        stateLong:        normalized.stateLong,
-        stateShort:       normalized.stateShort,
-        location:         normalized.location,
-        gpsLat:           normalized.gpsLat,
-        gpsLon:           normalized.gpsLon,
+        countryLong: normalized.countryLong,
+        countryShort: normalized.countryShort,
+        stateLong: normalized.stateLong,
+        stateShort: normalized.stateShort,
+        location: normalized.location,
+        gpsLat: normalized.gpsLat,
+        gpsLon: normalized.gpsLon,
         // Raw payload
-        rawPayload:       normalized.rawPayload,
+        rawPayload: normalized.rawPayload,
         // LASPA enforcement metrics
-        isFined:          normalized.isFined,
-        fineAmount:       normalized.fineAmount,
-        isDisputed:       normalized.isDisputed,
-        isClamped:        normalized.isClamped,
-        isTowed:          normalized.isTowed,
-        isImpounded:      normalized.isImpounded,
-        isBooked:         normalized.isBooked,
-        bookingHours:     normalized.bookingHours,
-        revenue:          normalized.revenue,
+        isFined: normalized.isFined,
+        fineAmount: normalized.fineAmount,
+        isDisputed: normalized.isDisputed,
+        isClamped: normalized.isClamped,
+        isTowed: normalized.isTowed,
+        isImpounded: normalized.isImpounded,
+        isBooked: normalized.isBooked,
+        bookingHours: normalized.bookingHours,
+        revenue: normalized.revenue,
       },
     });
 
