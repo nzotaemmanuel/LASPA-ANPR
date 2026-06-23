@@ -621,26 +621,34 @@ async function handleIngestion(req, res) {
     try {
       const result = await forwardRequest(req);
       if (result) {
-        // Clean up temp files created by multer
-        if (req.files && req.files.length > 0) {
-          for (const file of req.files) {
-            try {
-              if (fs.existsSync(file.path)) {
-                fs.unlinkSync(file.path);
+        // If remote returned a non-2xx (e.g. Render sleeping / 502), fall through to local processing
+        if (result.status >= 200 && result.status < 300) {
+          // Clean up temp files created by multer
+          if (req.files && req.files.length > 0) {
+            for (const file of req.files) {
+              try {
+                if (fs.existsSync(file.path)) {
+                  fs.unlinkSync(file.path);
+                }
+              } catch (unlinkErr) {
+                console.error('[FORWARDER] Temp file cleanup error:', unlinkErr.message);
               }
-            } catch (unlinkErr) {
-              console.error('[FORWARDER] Temp file cleanup error:', unlinkErr.message);
             }
           }
-        }
-        if (typeof result.data === 'object') {
-          return res.status(result.status).json(result.data);
+          if (typeof result.data === 'object') {
+            return res.status(result.status).json(result.data);
+          } else {
+            return res.status(result.status).send(result.data);
+          }
         } else {
-          return res.status(result.status).send(result.data);
+          console.warn(`[FORWARDER] Remote returned ${result.status}. Falling back to local processing.`);
+          // fall through to local ingestion below
         }
       }
     } catch (err) {
-      return res.status(502).json({ error: `Bad Gateway: Ingestion relay failed: ${err.message}` });
+      // Remote is unreachable (sleeping, network error, etc.) — process locally so camera gets 200 OK
+      console.warn(`[FORWARDER] Relay failed (${err.message}). Falling back to local processing.`);
+      // fall through to local ingestion below
     }
   }
 
