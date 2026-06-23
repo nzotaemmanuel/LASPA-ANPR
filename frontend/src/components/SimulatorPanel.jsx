@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Cpu, 
   RefreshCw, 
@@ -6,7 +6,9 @@ import {
   AlertOctagon, 
   FileText,
   Car,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Camera,
+  CameraOff
 } from 'lucide-react';
 import { getApiUrl } from '../api';
 
@@ -24,11 +26,65 @@ const mockVehicleSVGs = [
 ];
 
 export default function SimulatorPanel({ role }) {
+  const [simulationMode, setSimulationMode] = useState('mock'); // 'mock' | 'webcam'
+  const [webcamActive, setWebcamActive] = useState(false);
+  const [webcamError, setWebcamError] = useState('');
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
   const [cameraId, setCameraId] = useState('CAM-01-NORTH');
   const [plateNumber, setPlateNumber] = useState('LA-432-XYZ');
   const [confidence, setConfidence] = useState(94.2);
   const [imageIndex, setImageIndex] = useState(0);
   const [payloadFormat, setPayloadFormat] = useState('camera-native'); // 'camera-native' | 'simulator-flat'
+
+  const startWebcam = async () => {
+    setWebcamError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: 'environment' }
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setWebcamActive(true);
+    } catch (err) {
+      console.error('[WEBCAM] Failed to initialize stream:', err);
+      setWebcamError('Could not access webcam. Please check browser permissions.');
+      setSimulationMode('mock');
+    }
+  };
+
+  const stopWebcam = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setWebcamActive(false);
+  };
+
+  useEffect(() => {
+    if (simulationMode === 'webcam') {
+      startWebcam();
+    } else {
+      stopWebcam();
+    }
+    return () => {
+      stopWebcam();
+    };
+  }, [simulationMode]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   const [isFined, setIsFined] = useState(false);
   const [fineAmount, setFineAmount] = useState(25000);
@@ -84,9 +140,31 @@ export default function SimulatorPanel({ role }) {
     setErrorLog('');
 
     try {
-      // Create SVG representation with the plate text embedded
-      const rawSvg = mockVehicleSVGs[imageIndex];
-      const encodedSvg = rawSvg.replace('PLATE_PLACEHOLDER', plateNumber);
+      // Resolve image based on capture source (webcam vs mock generator)
+      let finalImage = null;
+      if (simulationMode === 'webcam') {
+        if (!videoRef.current || !webcamActive) {
+          setErrorLog('Webcam stream is not active. Switch to Mock mode or enable camera.');
+          setLoading(false);
+          return;
+        }
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = videoRef.current.videoWidth || 640;
+          canvas.height = videoRef.current.videoHeight || 480;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          finalImage = canvas.toDataURL('image/jpeg', 0.85);
+        } catch (captureErr) {
+          console.error('[WEBCAM] Failed to capture frame:', captureErr);
+          setErrorLog('Failed to capture frame from webcam.');
+          setLoading(false);
+          return;
+        }
+      } else {
+        const rawSvg = mockVehicleSVGs[imageIndex];
+        finalImage = rawSvg.replace('PLATE_PLACEHOLDER', plateNumber);
+      }
 
       let payload;
       const now = new Date();
@@ -162,7 +240,7 @@ export default function SimulatorPanel({ role }) {
               gps_lon: '3.3792'
             },
             images: {
-              normal_img: encodedSvg,
+              normal_img: finalImage,
               lp_img: '',
               aux_img: ''
             },
@@ -183,7 +261,7 @@ export default function SimulatorPanel({ role }) {
           plate_number: plateNumber.toUpperCase(),
           confidence: parseFloat(confidence),
           timestamp: now.toISOString(),
-          image: encodedSvg,
+          image: finalImage,
           isFined,
           fineAmount: parseFloat(fineAmount),
           isDisputed,
@@ -234,6 +312,35 @@ export default function SimulatorPanel({ role }) {
             </div>
 
             <div className="space-y-4">
+              {/* Simulation Mode Toggle (Mock vs Webcam) */}
+              <div>
+                <label className="block text-gray-400 text-xs font-semibold uppercase mb-1.5">Simulation Capture Source</label>
+                <div className="grid grid-cols-2 gap-2 bg-gray-950/60 p-1.5 rounded-xl border border-gray-800/80">
+                  <button
+                    onClick={() => setSimulationMode('mock')}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      simulationMode === 'mock'
+                        ? 'bg-cyan-500 text-gray-950 shadow-md font-bold'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <Car className="w-4.5 h-4.5" />
+                    Mock Generator
+                  </button>
+                  <button
+                    onClick={() => setSimulationMode('webcam')}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      simulationMode === 'webcam'
+                        ? 'bg-cyan-500 text-gray-950 shadow-md font-bold'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <Camera className="w-4.5 h-4.5" />
+                    Live Webcam
+                  </button>
+                </div>
+              </div>
+
               {/* Preset Shortcuts */}
               <div>
                 <span className="block text-gray-400 text-xs font-semibold uppercase mb-1.5">Simulation Presets</span>
@@ -440,24 +547,26 @@ export default function SimulatorPanel({ role }) {
               </div>
 
               {/* Vehicle visual selection */}
-              <div>
-                <span className="block text-gray-400 text-xs font-semibold uppercase mb-2">Simulated Vehicle Color/Type</span>
-                <div className="flex space-x-4">
-                  {['Red Sedan', 'Blue SUV', 'Green Hatch', 'Orange Sports'].map((color, index) => (
-                    <button
-                      key={color}
-                      onClick={() => setImageIndex(index)}
-                      className={`flex-1 py-2 rounded-lg border text-[10px] font-semibold transition-all ${
-                        imageIndex === index 
-                          ? 'bg-cyan-500/10 border-cyan-500 text-cyan-400 font-bold' 
-                          : 'bg-gray-950/40 border-gray-800 text-gray-500 hover:text-gray-300'
-                      }`}
-                    >
-                      {color}
-                    </button>
-                  ))}
+              {simulationMode === 'mock' && (
+                <div>
+                  <span className="block text-gray-400 text-xs font-semibold uppercase mb-2">Simulated Vehicle Color/Type</span>
+                  <div className="flex space-x-4">
+                    {['Red Sedan', 'Blue SUV', 'Green Hatch', 'Orange Sports'].map((color, index) => (
+                      <button
+                        key={color}
+                        onClick={() => setImageIndex(index)}
+                        className={`flex-1 py-2 rounded-lg border text-[10px] font-semibold transition-all ${
+                          imageIndex === index 
+                            ? 'bg-cyan-500/10 border-cyan-500 text-cyan-400 font-bold' 
+                            : 'bg-gray-950/40 border-gray-800 text-gray-500 hover:text-gray-300'
+                        }`}
+                      >
+                        {color}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
@@ -468,11 +577,11 @@ export default function SimulatorPanel({ role }) {
           >
             {loading ? (
               <>
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Ingesting Mock Event...
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> {simulationMode === 'webcam' ? 'Ingesting Webcam Capture...' : 'Ingesting Mock Event...'}
               </>
             ) : (
               <>
-                <Send className="w-4 h-4 mr-2" /> Dispatch Camera Payload POST
+                <Send className="w-4 h-4 mr-2" /> {simulationMode === 'webcam' ? 'Dispatch Webcam Capture POST' : 'Dispatch Camera Payload POST'}
               </>
             )}
           </button>
@@ -484,15 +593,43 @@ export default function SimulatorPanel({ role }) {
           {/* Card Preview */}
           <div className="glass-panel p-5 rounded-2xl border border-gray-800/80 shadow-md">
             <span className="block text-gray-400 text-xs font-semibold uppercase mb-3 flex items-center">
-              <Car className="w-4.5 h-4.5 text-cyan-400 mr-1.5" />
-              Ingestion Payload Preview
+              {simulationMode === 'webcam' ? (
+                <>
+                  <Camera className="w-4.5 h-4.5 text-cyan-400 mr-1.5" />
+                  Live Webcam Video Feed
+                </>
+              ) : (
+                <>
+                  <Car className="w-4.5 h-4.5 text-cyan-400 mr-1.5" />
+                  Ingestion Payload Preview
+                </>
+              )}
             </span>
             <div className="relative h-48 bg-[#1e293b] border border-gray-800/40 rounded-xl overflow-hidden flex items-center justify-center">
-              <img 
-                src={mockVehicleSVGs[imageIndex].replace('PLATE_PLACEHOLDER', plateNumber.toUpperCase())} 
-                alt="Mock Ingestion Vehicle SVG" 
-                className="w-full h-full object-cover"
-              />
+              {simulationMode === 'webcam' ? (
+                <div className="w-full h-full relative">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                    style={{ transform: 'scaleX(-1)' }}
+                  />
+                  {webcamError && (
+                    <div className="absolute inset-0 bg-red-950/80 flex flex-col items-center justify-center p-4 text-center text-xs text-red-300 space-y-2">
+                      <CameraOff className="w-8 h-8 text-red-400" />
+                      <span>{webcamError}</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <img 
+                  src={mockVehicleSVGs[imageIndex].replace('PLATE_PLACEHOLDER', plateNumber.toUpperCase())} 
+                  alt="Mock Ingestion Vehicle SVG" 
+                  className="w-full h-full object-cover"
+                />
+              )}
             </div>
           </div>
 
