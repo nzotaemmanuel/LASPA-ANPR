@@ -55,6 +55,13 @@ router.get('/', async (req, res) => {
     // Build Prisma query filters
     const where = {};
 
+    // LIVE_ONLY mode: restrict to today's events only (midnight → now)
+    if (process.env.LIVE_ONLY === 'true') {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      where.timestamp = { gte: todayStart };
+    }
+
     // Filter by Plate Number
     if (plateQuery) {
       const filter = buildPlateFilter(plateQuery);
@@ -68,9 +75,9 @@ router.get('/', async (req, res) => {
       where.cameraId = cameraId.trim();
     }
 
-    // Filter by Date Range
+    // Filter by Date Range (merged with LIVE_ONLY if active)
     if (startDate || endDate) {
-      where.timestamp = {};
+      where.timestamp = where.timestamp || {};
       if (startDate) {
         where.timestamp.gte = new Date(startDate);
       }

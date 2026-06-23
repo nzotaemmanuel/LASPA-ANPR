@@ -1,10 +1,12 @@
+require('dotenv').config();
+const logger = require('./logger'); // Must be first — overrides console
+
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config();
 
 const prisma = require('./db');
 const { startPurgeScheduler } = require('./services/purge');
@@ -86,7 +88,12 @@ app.use('/api/flags', require('./routes/flags'));
 
 // Basic health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', database: 'connected', time: new Date() });
+  res.json({
+    status: 'healthy',
+    database: 'connected',
+    liveOnly: process.env.LIVE_ONLY === 'true',
+    time: new Date()
+  });
 });
 
 // Start the background data retention purge scheduler

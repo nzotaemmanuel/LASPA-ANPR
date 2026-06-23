@@ -35,3 +35,6 @@ dist/
 *.sln
 *.swp
 *.log
+
+# Application log files (written by Winston)
+backend/logs/
