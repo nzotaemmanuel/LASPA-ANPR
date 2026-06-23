@@ -61,12 +61,18 @@ async function forwardRequest(req) {
     fetchBody = req.body ? JSON.stringify(req.body) : undefined;
   }
 
+  // Abort relay if remote doesn't respond within 50 seconds (gives Render time to wake up)
+  const controller = new AbortController();
+  const relayTimeout = setTimeout(() => controller.abort(), 50000);
+
   try {
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: headers,
-      body: fetchBody
+      body: fetchBody,
+      signal: controller.signal
     });
+    clearTimeout(relayTimeout);
 
     const resContentType = response.headers.get('content-type') || '';
     const data = resContentType.includes('application/json')
@@ -78,7 +84,9 @@ async function forwardRequest(req) {
       data: data
     };
   } catch (err) {
-    console.error(`[FORWARDER] Relay to remote server failed:`, err.message);
+    clearTimeout(relayTimeout);
+    const reason = err.name === 'AbortError' ? 'timed out after 50s' : err.message;
+    console.error(`[FORWARDER] Relay to remote server failed: ${reason}`);
     throw err;
   }
 }
@@ -616,41 +624,6 @@ const upload = multer({ storage });
 // Core ingestion handler
 // ──────────────────────────────────────────────────────────────────────────────
 async function handleIngestion(req, res) {
-  // If forwarding is configured, relay the request to the remote HTTPS backend
-  if (process.env.FORWARD_TO_URL) {
-    try {
-      const result = await forwardRequest(req);
-      if (result) {
-        // Only relay the response if remote returned a successful 2xx
-        if (result.status >= 200 && result.status < 300) {
-          // Clean up temp files created by multer
-          if (req.files && req.files.length > 0) {
-            for (const file of req.files) {
-              try {
-                if (fs.existsSync(file.path)) {
-                  fs.unlinkSync(file.path);
-                }
-              } catch (unlinkErr) {
-                console.error('[FORWARDER] Temp file cleanup error:', unlinkErr.message);
-              }
-            }
-          }
-          if (typeof result.data === 'object') {
-            return res.status(result.status).json(result.data);
-          } else {
-            return res.status(result.status).send(result.data);
-          }
-        } else {
-          // Remote returned non-2xx — fall through to local processing
-          console.warn(`[FORWARDER] Remote returned ${result.status}. Processing locally.`);
-        }
-      }
-    } catch (err) {
-      // Remote unreachable (Render sleeping, network error, etc.) — process locally
-      console.warn(`[FORWARDER] Relay failed: ${err.message}. Processing locally.`);
-    }
-  }
-
   try {
     let body = req.body;
 
@@ -905,6 +878,20 @@ async function handleIngestion(req, res) {
     const broadcast = req.app.get('broadcast');
     if (broadcast) {
       broadcast(event);
+    }
+
+    // 6. Asynchronously forward to remote server in background (if configured)
+    if (process.env.FORWARD_TO_URL) {
+      console.log(`[FORWARDER] Queueing background relay to remote server...`);
+      forwardRequest(req).then((resForward) => {
+        if (resForward && resForward.status >= 200 && resForward.status < 300) {
+          console.log(`[FORWARDER] Background relay to remote server succeeded: Status ${resForward.status}`);
+        } else {
+          console.warn(`[FORWARDER] Background relay to remote server returned status: ${resForward ? resForward.status : 'unknown'}`);
+        }
+      }).catch(err => {
+        console.error(`[FORWARDER] Background relay to remote server failed: ${err.message}`);
+      });
     }
 
     logEntry.processingStatus = `OK - Event ID: ${event.id}`;
